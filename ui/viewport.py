@@ -296,13 +296,15 @@ class Viewport(
             GL_MULTISAMPLE
         )
 
-        glEnable(
-            GL_CULL_FACE
-        )
+        # TEMP DEBUG:
+        # Disable back-face culling to verify wall winding.
+        # glEnable(
+        #     GL_CULL_FACE
+        # )
 
-        glCullFace(
-            GL_BACK
-        )
+        # glCullFace(
+        #     GL_BACK
+        # )
 
         glClearColor(
             0.045,

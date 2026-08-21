@@ -947,22 +947,29 @@ def envelope_to_mesh(
     envelope: Envelope,
 ) -> trimesh.Trimesh:
     """
-    Jednostavna i deterministička triangulacija.
+    Raster-cell mesher.
 
-    Nema:
-      - boolean-a
-      - Triangle-a
-      - Earcut-a
-      - zipper ring-a
-      - mesh cleanup-a
+    VAŽNA KONVENCIJA:
 
-    solid_mask određuje:
+        solid_mask[y, x]
 
-        PCB outline
-        i
-        NPTH rupe
+    ne predstavlja vertex, već jednu fizičku XY ćeliju
+    centriranu na ray sample-u (x, y).
 
-    Svaka boundary ćelija automatski dobija vertikalni zid.
+    Time finalni mesh direktno prati PCB masku.
+
+    Nema više:
+
+        cell = cornerA & cornerB & cornerC & cornerD
+
+    što je ranije erodiralo PCB edge i uništavalo
+    konkavne Edge.Cut oblike.
+
+    Ista ćelijska topologija automatski rešava:
+
+        - spoljašnji PCB edge
+        - konkavne useke
+        - NPTH rupe
     """
 
     top = np.asarray(
@@ -975,88 +982,185 @@ def envelope_to_mesh(
         dtype=np.float32,
     )
 
-    mask = np.asarray(
+    solid = np.asarray(
         envelope.solid_mask,
         dtype=bool,
     )
 
     if (
-        top.shape
-        !=
-        bottom.shape
+        top.shape != bottom.shape
         or
-        top.shape
-        !=
-        mask.shape
+        top.shape != solid.shape
     ):
         raise ValueError(
             "Envelope arrays have incompatible shapes."
         )
 
-    h, w = (
-        mask.shape
+    h, w = solid.shape
+
+    resolution = float(
+        envelope.resolution
+    )
+
+    half = (
+        resolution
+        *
+        0.5
     )
 
     #
-    # Ćelija postoji samo ako sva četiri corner sample-a
-    # imaju materijal.
+    # ========================================================
+    # HEIGHT SAMPLING AT CELL CORNERS
+    # ========================================================
     #
-    cell_mask = (
-        mask[:-1, :-1]
-        &
-        mask[:-1, 1:]
-        &
-        mask[1:, :-1]
-        &
-        mask[1:, 1:]
+    # top/bottom su vrednosti u CENTRU raster ćelije.
+    #
+    # Za zajednički corner uzimamo prosek svih susednih
+    # solid cells koje ga dodiruju.
+    #
+    # Tako adjacent cells koriste ISTI Z vertex i površina
+    # ostaje potpuno spojena.
+    #
+
+    corner_top_sum = np.zeros(
+        (h + 1, w + 1),
+        dtype=np.float64,
+    )
+
+    corner_bottom_sum = np.zeros(
+        (h + 1, w + 1),
+        dtype=np.float64,
+    )
+
+    corner_count = np.zeros(
+        (h + 1, w + 1),
+        dtype=np.int32,
+    )
+
+    ys, xs = np.nonzero(
+        solid
+    )
+
+    for y, x in zip(
+        ys,
+        xs,
+    ):
+
+        tz = float(
+            top[y, x]
+        )
+
+        bz = float(
+            bottom[y, x]
+        )
+
+        #
+        # četiri cornera ove ćelije
+        #
+        for cy, cx in (
+            (y, x),
+            (y, x + 1),
+            (y + 1, x),
+            (y + 1, x + 1),
+        ):
+
+            corner_top_sum[
+                cy,
+                cx
+            ] += tz
+
+            corner_bottom_sum[
+                cy,
+                cx
+            ] += bz
+
+            corner_count[
+                cy,
+                cx
+            ] += 1
+
+    used_corner = (
+        corner_count
+        >
+        0
+    )
+
+    corner_top = np.zeros(
+        (h + 1, w + 1),
+        dtype=np.float32,
+    )
+
+    corner_bottom = np.zeros(
+        (h + 1, w + 1),
+        dtype=np.float32,
+    )
+
+    corner_top[
+        used_corner
+    ] = (
+        corner_top_sum[
+            used_corner
+        ]
+        /
+        corner_count[
+            used_corner
+        ]
+    )
+
+    corner_bottom[
+        used_corner
+    ] = (
+        corner_bottom_sum[
+            used_corner
+        ]
+        /
+        corner_count[
+            used_corner
+        ]
     )
 
     #
-    # Potrebni grid vertices.
+    # ========================================================
+    # SHARED VERTICES
+    # ========================================================
     #
-    needed = np.zeros(
-        (h, w),
-        dtype=bool,
-    )
-
-    needed[:-1, :-1] |= cell_mask
-    needed[:-1, 1:] |= cell_mask
-    needed[1:, :-1] |= cell_mask
-    needed[1:, 1:] |= cell_mask
 
     vertices = []
 
     top_index = np.full(
-        (h, w),
+        (h + 1, w + 1),
         -1,
         dtype=np.int64,
     )
 
     bottom_index = np.full(
-        (h, w),
+        (h + 1, w + 1),
         -1,
         dtype=np.int64,
     )
 
-    #
-    # --------------------------------------------------------
-    # VERTICES
-    # --------------------------------------------------------
-    #
+    for y in range(
+        h + 1
+    ):
 
-    for y in range(h):
-
+        #
+        # mask sample y=0 je centar prve ćelije.
+        #
+        # Zato corner počinje pola resolution-a ranije.
+        #
         py = (
             envelope.min_y
             +
-            y
-            *
-            envelope.resolution
+            y * resolution
+            -
+            half
         )
 
-        for x in range(w):
+        for x in range(
+            w + 1
+        ):
 
-            if not needed[
+            if not used_corner[
                 y,
                 x
             ]:
@@ -1065,9 +1169,9 @@ def envelope_to_mesh(
             px = (
                 envelope.min_x
                 +
-                x
-                *
-                envelope.resolution
+                x * resolution
+                -
+                half
             )
 
             top_index[
@@ -1082,7 +1186,7 @@ def envelope_to_mesh(
                     px,
                     py,
                     float(
-                        top[y, x]
+                        corner_top[y, x]
                     ),
                 ]
             )
@@ -1099,7 +1203,7 @@ def envelope_to_mesh(
                     px,
                     py,
                     float(
-                        bottom[y, x]
+                        corner_bottom[y, x]
                     ),
                 ]
             )
@@ -1107,131 +1211,123 @@ def envelope_to_mesh(
     faces = []
 
     #
-    # --------------------------------------------------------
+    # ========================================================
     # TOP + BOTTOM
-    # --------------------------------------------------------
+    # ========================================================
     #
 
-    for y in range(
-        h - 1
+    for y, x in zip(
+        ys,
+        xs,
     ):
 
-        for x in range(
-            w - 1
-        ):
+        ta = top_index[
+            y,
+            x
+        ]
 
-            if not cell_mask[
-                y,
-                x
-            ]:
-                continue
+        tb = top_index[
+            y,
+            x + 1
+        ]
 
-            ta = top_index[
-                y,
-                x
+        tc = top_index[
+            y + 1,
+            x
+        ]
+
+        td = top_index[
+            y + 1,
+            x + 1
+        ]
+
+        ba = bottom_index[
+            y,
+            x
+        ]
+
+        bb = bottom_index[
+            y,
+            x + 1
+        ]
+
+        bc = bottom_index[
+            y + 1,
+            x
+        ]
+
+        bd = bottom_index[
+            y + 1,
+            x + 1
+        ]
+
+        #
+        # TOP
+        #
+
+        faces.append(
+            [
+                ta,
+                tb,
+                td,
             ]
+        )
 
-            tb = top_index[
-                y,
-                x + 1
+        faces.append(
+            [
+                ta,
+                td,
+                tc,
             ]
+        )
 
-            tc = top_index[
-                y + 1,
-                x
+        #
+        # BOTTOM
+        #
+
+        faces.append(
+            [
+                ba,
+                bd,
+                bb,
             ]
+        )
 
-            td = top_index[
-                y + 1,
-                x + 1
+        faces.append(
+            [
+                ba,
+                bc,
+                bd,
             ]
-
-            ba = bottom_index[
-                y,
-                x
-            ]
-
-            bb = bottom_index[
-                y,
-                x + 1
-            ]
-
-            bc = bottom_index[
-                y + 1,
-                x
-            ]
-
-            bd = bottom_index[
-                y + 1,
-                x + 1
-            ]
-
-            #
-            # TOP
-            #
-            faces.append(
-                [
-                    ta,
-                    tb,
-                    td,
-                ]
-            )
-
-            faces.append(
-                [
-                    ta,
-                    td,
-                    tc,
-                ]
-            )
-
-            #
-            # BOTTOM
-            #
-            faces.append(
-                [
-                    ba,
-                    bd,
-                    bb,
-                ]
-            )
-
-            faces.append(
-                [
-                    ba,
-                    bc,
-                    bd,
-                ]
-            )
+        )
 
     #
-    # --------------------------------------------------------
+    # ========================================================
     # BOUNDARY WALLS
-    # --------------------------------------------------------
+    # ========================================================
     #
-    # Ista logika zatvara:
+    # Boundary nije izveden iz triangulacije.
     #
-    #   - spoljašnji PCB edge
-    #   - NPTH hole edge
+    # Direktno gledamo:
     #
-    # Bez ikakvog posebnog slučaja.
+    #     postoji li susedna SOLID CELL?
+    #
+    # Ako ne postoji -> pravi zid.
+    #
+    # Zato ovo identično radi za:
+    #
+    #     spoljašnji PCB edge
+    #     konkavni notch
+    #     NPTH
     #
 
     def add_wall(
-        t1: int,
-        t2: int,
-        b1: int,
-        b2: int,
-        reverse: bool,
+        t1,
+        t2,
+        b1,
+        b2,
+        reverse=False,
     ):
-
-        if min(
-            t1,
-            t2,
-            b1,
-            b2,
-        ) < 0:
-            return
 
         if reverse:
 
@@ -1269,109 +1365,104 @@ def envelope_to_mesh(
                 ]
             )
 
-    for y in range(
-        h - 1
+    for y, x in zip(
+        ys,
+        xs,
     ):
 
-        for x in range(
-            w - 1
+        ta = top_index[y, x]
+        tb = top_index[y, x + 1]
+        tc = top_index[y + 1, x]
+        td = top_index[y + 1, x + 1]
+
+        ba = bottom_index[y, x]
+        bb = bottom_index[y, x + 1]
+        bc = bottom_index[y + 1, x]
+        bd = bottom_index[y + 1, x + 1]
+
+        #
+        # -Y
+        #
+
+        if (
+            y == 0
+            or
+            not solid[
+                y - 1,
+                x
+            ]
         ):
 
-            if not cell_mask[
-                y,
+            add_wall(
+                ta,
+                tb,
+                ba,
+                bb,
+                reverse=True,
+            )
+
+        #
+        # +Y
+        #
+
+        if (
+            y == h - 1
+            or
+            not solid[
+                y + 1,
                 x
-            ]:
-                continue
+            ]
+        ):
 
-            ta = top_index[y, x]
-            tb = top_index[y, x + 1]
-            tc = top_index[y + 1, x]
-            td = top_index[y + 1, x + 1]
+            add_wall(
+                tc,
+                td,
+                bc,
+                bd,
+                reverse=False,
+            )
 
-            ba = bottom_index[y, x]
-            bb = bottom_index[y, x + 1]
-            bc = bottom_index[y + 1, x]
-            bd = bottom_index[y + 1, x + 1]
+        #
+        # -X
+        #
 
-            #
-            # -Y
-            #
-            if (
-                y == 0
-                or
-                not cell_mask[
-                    y - 1,
-                    x
-                ]
-            ):
+        if (
+            x == 0
+            or
+            not solid[
+                y,
+                x - 1
+            ]
+        ):
 
-                add_wall(
-                    ta,
-                    tb,
-                    ba,
-                    bb,
-                    reverse=True,
-                )
+            add_wall(
+                tc,
+                ta,
+                bc,
+                ba,
+                reverse=False,
+            )
 
-            #
-            # +Y
-            #
-            if (
-                y == h - 2
-                or
-                not cell_mask[
-                    y + 1,
-                    x
-                ]
-            ):
+        #
+        # +X
+        #
 
-                add_wall(
-                    tc,
-                    td,
-                    bc,
-                    bd,
-                    reverse=False,
-                )
+        if (
+            x == w - 1
+            or
+            not solid[
+                y,
+                x + 1
+            ]
+        ):
 
-            #
-            # -X
-            #
-            if (
-                x == 0
-                or
-                not cell_mask[
-                    y,
-                    x - 1
-                ]
-            ):
-
-                add_wall(
-                    tc,
-                    ta,
-                    bc,
-                    ba,
-                    reverse=False,
-                )
-
-            #
-            # +X
-            #
-            if (
-                x == w - 2
-                or
-                not cell_mask[
-                    y,
-                    x + 1
-                ]
-            ):
-
-                add_wall(
-                    tb,
-                    td,
-                    bb,
-                    bd,
-                    reverse=False,
-                )
+            add_wall(
+                tb,
+                td,
+                bb,
+                bd,
+                reverse=False,
+            )
 
     if not vertices:
         raise ValueError(
@@ -1400,9 +1491,11 @@ def envelope_to_mesh(
     mesh.remove_unreferenced_vertices()
 
     print(
-        "[mesh] "
+        "[mesh] raster-cell topology | "
+        f"solid cells={np.count_nonzero(solid):,} | "
         f"{len(mesh.vertices):,} vertices | "
         f"{len(mesh.faces):,} triangles"
     )
 
     return mesh
+

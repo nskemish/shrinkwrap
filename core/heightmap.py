@@ -539,10 +539,6 @@ def generate_heightmap(
         enclosed_voids,
     )
 
-    _debug_save_mask(
-        "pcb_mask",
-        pcb_mask,
-    )
 
     print(
         "[heightmap] topology | "
@@ -557,79 +553,23 @@ def generate_heightmap(
     )
 
     #
-    # Van stvarnog model XY regiona padding nikada ne sme
-    # postati PCB.
+    # NEMA bounding-box clipping-a.
     #
-    xs = (
-        min_x
-        +
-        np.arange(
-            width,
-            dtype=np.float64,
-        )
-        *
-        resolution
+    # Analysis padding je već deo outside_air regiona,
+    # tako da flood-fill topologija sama određuje gde
+    # rigidni PCB prestaje.
+    #
+    # Time ne sečemo validan PCB edge prema STL bounds-u.
+    #
+
+    pcb_mask = np.asarray(
+        pcb_mask,
+        dtype=bool,
     )
 
-    ys = (
-        min_y
-        +
-        np.arange(
-            height,
-            dtype=np.float64,
-        )
-        *
-        resolution
-    )
-
-    inside_original_bounds = (
-        (
-            xs[
-                None,
-                :
-            ]
-            >=
-            model_min_x
-            -
-            resolution
-        )
-        &
-        (
-            xs[
-                None,
-                :
-            ]
-            <=
-            model_max_x
-            +
-            resolution
-        )
-        &
-        (
-            ys[
-                :,
-                None
-            ]
-            >=
-            model_min_y
-            -
-            resolution
-        )
-        &
-        (
-            ys[
-                :,
-                None
-            ]
-            <=
-            model_max_y
-            +
-            resolution
-        )
-    )
-
-    pcb_mask &= (
-        inside_original_bounds
+    _debug_save_mask(
+        "pcb_mask",
+        pcb_mask,
     )
 
     print(
