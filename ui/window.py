@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -11,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -20,14 +23,26 @@ from core.loader import (
     get_mesh_info,
 )
 
-from core.heightmap import generate_heightmap
+from core.heightmap import (
+    generate_heightmap,
+)
 
 from core.envelope import (
     build_envelope,
     envelope_to_mesh,
 )
 
-from core.export import export_mesh
+from core.drill import (
+    deduplicate_holes,
+    drill_center,
+    filter_drills,
+    load_excellon,
+    transform_drills,
+)
+
+from core.export import (
+    export_mesh,
+)
 
 from ui.viewport import Viewport
 
@@ -42,13 +57,16 @@ class MainWindow(QMainWindow):
         )
 
         self.resize(
-            1400,
-            850,
+            1450,
+            900,
         )
 
         self.viewport = Viewport()
 
         self.generated_mesh = None
+
+        self.pth_path = None
+        self.npth_path = None
 
         self._build_ui()
 
@@ -69,35 +87,72 @@ class MainWindow(QMainWindow):
         )
 
         layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0,
+            0, 0, 0, 0
         )
 
         layout.setSpacing(
             0
         )
 
-        sidebar = (
-            self._create_sidebar()
+        sidebar = self._create_sidebar()
+
+        scroll = QScrollArea()
+        scroll.setWidget(sidebar)
+        scroll.setWidgetResizable(True)
+
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
         )
 
-        layout.addWidget(
-            sidebar
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
         )
+
+        scroll.setFixedWidth(350)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        scroll.setStyleSheet(
+            """
+            QScrollArea {
+                background: #14171c;
+                border: none;
+            }
+
+            QScrollBar:vertical {
+                background: #14171c;
+                width: 10px;
+            }
+
+            QScrollBar::handle:vertical {
+                background: #39414c;
+                min-height: 30px;
+                border-radius: 5px;
+            }
+
+            QScrollBar::handle:vertical:hover {
+                background: #4a5563;
+            }
+
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            """
+        )
+
+        layout.addWidget(scroll)
 
         layout.addWidget(
             self.viewport,
             1,
         )
 
-    def _create_sidebar(self) -> QWidget:
+    def _create_sidebar(self):
 
         sidebar = QFrame()
 
-        sidebar.setFixedWidth(
-            300
+        sidebar.setMinimumWidth(
+            330
         )
 
         sidebar.setObjectName(
@@ -109,19 +164,16 @@ class MainWindow(QMainWindow):
         )
 
         layout.setContentsMargins(
-            20,
-            20,
-            20,
-            20,
+            20, 20, 20, 20
         )
 
         layout.setSpacing(
-            14
+            12
         )
 
-        #
-        # Header
-        #
+        # =====================================================
+        # HEADER
+        # =====================================================
 
         title = QLabel(
             "SHRINKWRAP"
@@ -132,7 +184,7 @@ class MainWindow(QMainWindow):
         )
 
         subtitle = QLabel(
-            "PCB envelope generator"
+            "PCB envelope + Excellon drilling"
         )
 
         subtitle.setObjectName(
@@ -147,31 +199,31 @@ class MainWindow(QMainWindow):
             subtitle
         )
 
-        #
-        # Input
-        #
+        # =====================================================
+        # MODEL
+        # =====================================================
 
-        input_group = QGroupBox(
-            "Input"
+        model_group = QGroupBox(
+            "3D Model"
         )
 
-        input_layout = QVBoxLayout(
-            input_group
+        model_layout = QVBoxLayout(
+            model_group
         )
 
-        self.file_label = QLabel(
+        self.model_label = QLabel(
             "No model loaded"
         )
 
-        self.file_label.setWordWrap(
+        self.model_label.setWordWrap(
             True
         )
 
-        open_button = QPushButton(
+        open_model_button = QPushButton(
             "Open model..."
         )
 
-        open_button.clicked.connect(
+        open_model_button.clicked.connect(
             self.open_model
         )
 
@@ -183,25 +235,270 @@ class MainWindow(QMainWindow):
             self.viewport.focus_mesh
         )
 
-        input_layout.addWidget(
-            self.file_label
+        model_layout.addWidget(
+            self.model_label
         )
 
-        input_layout.addWidget(
-            open_button
+        model_layout.addWidget(
+            open_model_button
         )
 
-        input_layout.addWidget(
+        model_layout.addWidget(
             focus_button
         )
 
         layout.addWidget(
-            input_group
+            model_group
         )
 
-        #
-        # Envelope settings
-        #
+        # =====================================================
+        # DRILL FILES
+        # =====================================================
+
+        drill_group = QGroupBox(
+            "Drill Data"
+        )
+
+        drill_layout = QVBoxLayout(
+            drill_group
+        )
+
+        self.pth_checkbox = QCheckBox(
+            "Use PTH"
+        )
+
+        self.pth_checkbox.setChecked(
+            False
+        )
+
+        self.pth_label = QLabel(
+            "PTH: not loaded"
+        )
+
+        self.pth_label.setWordWrap(
+            True
+        )
+
+        pth_button = QPushButton(
+            "Load PTH.drl..."
+        )
+
+        pth_button.clicked.connect(
+            self.open_pth
+        )
+
+        self.npth_checkbox = QCheckBox(
+            "Use NPTH"
+        )
+
+        self.npth_checkbox.setChecked(
+            True
+        )
+
+        self.npth_label = QLabel(
+            "NPTH: not loaded"
+        )
+
+        self.npth_label.setWordWrap(
+            True
+        )
+
+        npth_button = QPushButton(
+            "Load NPTH.drl..."
+        )
+
+        npth_button.clicked.connect(
+            self.open_npth
+        )
+
+        drill_layout.addWidget(
+            self.pth_checkbox
+        )
+
+        drill_layout.addWidget(
+            self.pth_label
+        )
+
+        drill_layout.addWidget(
+            pth_button
+        )
+
+        drill_layout.addSpacing(
+            6
+        )
+
+        drill_layout.addWidget(
+            self.npth_checkbox
+        )
+
+        drill_layout.addWidget(
+            self.npth_label
+        )
+
+        drill_layout.addWidget(
+            npth_button
+        )
+
+        layout.addWidget(
+            drill_group
+        )
+
+        # =====================================================
+        # DRILL SETTINGS
+        # =====================================================
+
+        drill_settings = QGroupBox(
+            "Drill Settings"
+        )
+
+        drill_form = QFormLayout(
+            drill_settings
+        )
+
+        self.min_drill_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.min_drill_spin.setRange(
+            0.0,
+            20.0,
+        )
+
+        self.min_drill_spin.setDecimals(
+            3
+        )
+
+        self.min_drill_spin.setValue(
+            2.50
+        )
+
+        self.min_drill_spin.setSingleStep(
+            0.10
+        )
+
+        self.min_drill_spin.setSuffix(
+            " mm"
+        )
+
+        self.drill_offset_x = (
+            QDoubleSpinBox()
+        )
+
+        self.drill_offset_x.setRange(
+            -1000.0,
+            1000.0,
+        )
+
+        self.drill_offset_x.setDecimals(
+            3
+        )
+
+        self.drill_offset_x.setSuffix(
+            " mm"
+        )
+
+        self.drill_offset_y = (
+            QDoubleSpinBox()
+        )
+
+        self.drill_offset_y.setRange(
+            -1000.0,
+            1000.0,
+        )
+
+        self.drill_offset_y.setDecimals(
+            3
+        )
+
+        self.drill_offset_y.setSuffix(
+            " mm"
+        )
+
+        self.flip_x_checkbox = (
+            QCheckBox(
+                "Flip X"
+            )
+        )
+
+        self.flip_y_checkbox = (
+            QCheckBox(
+                "Flip Y"
+            )
+        )
+
+        auto_center_button = QPushButton(
+            "Auto-center drill coordinates"
+        )
+
+        auto_center_button.clicked.connect(
+            self.auto_center_drills
+        )
+
+        drill_form.addRow(
+            "Minimum Ø",
+            self.min_drill_spin,
+        )
+
+        self.hole_keepout_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.hole_keepout_spin.setRange(
+            0.0,
+            20.0,
+        )
+
+        self.hole_keepout_spin.setDecimals(
+            2
+        )
+
+        self.hole_keepout_spin.setValue(
+            2.0
+        )
+
+        self.hole_keepout_spin.setSingleStep(
+            0.25
+        )
+
+        self.hole_keepout_spin.setSuffix(
+            " mm"
+        )
+
+        drill_form.addRow(
+            "Wrap keepout",
+            self.hole_keepout_spin,
+        )
+
+
+        drill_form.addRow(
+            "X offset",
+            self.drill_offset_x,
+        )
+
+        drill_form.addRow(
+            "Y offset",
+            self.drill_offset_y,
+        )
+
+        drill_form.addRow(
+            self.flip_x_checkbox
+        )
+
+        drill_form.addRow(
+            self.flip_y_checkbox
+        )
+
+        drill_form.addRow(
+            auto_center_button
+        )
+
+        layout.addWidget(
+            drill_settings
+        )
+
+        # =====================================================
+        # ENVELOPE
+        # =====================================================
 
         envelope_group = QGroupBox(
             "Envelope"
@@ -210,10 +507,6 @@ class MainWindow(QMainWindow):
         form = QFormLayout(
             envelope_group
         )
-
-        #
-        # Resolution
-        #
 
         self.resolution_spin = (
             QDoubleSpinBox()
@@ -225,7 +518,7 @@ class MainWindow(QMainWindow):
         )
 
         self.resolution_spin.setValue(
-            0.30
+            0.20
         )
 
         self.resolution_spin.setSingleStep(
@@ -235,10 +528,6 @@ class MainWindow(QMainWindow):
         self.resolution_spin.setSuffix(
             " mm"
         )
-
-        #
-        # Bridge
-        #
 
         self.bridge_spin = (
             QDoubleSpinBox()
@@ -250,7 +539,7 @@ class MainWindow(QMainWindow):
         )
 
         self.bridge_spin.setValue(
-            6.0
+            4.0
         )
 
         self.bridge_spin.setSingleStep(
@@ -261,21 +550,17 @@ class MainWindow(QMainWindow):
             " mm"
         )
 
-        #
-        # Cloth slope
-        #
-
         self.slope_spin = (
             QDoubleSpinBox()
         )
 
         self.slope_spin.setRange(
             5.0,
-            85.0,
+            88.0,
         )
 
         self.slope_spin.setValue(
-            45.0
+            55.0
         )
 
         self.slope_spin.setSingleStep(
@@ -285,10 +570,6 @@ class MainWindow(QMainWindow):
         self.slope_spin.setSuffix(
             "°"
         )
-
-        #
-        # Smoothing
-        #
 
         self.smoothing_spin = (
             QDoubleSpinBox()
@@ -300,20 +581,16 @@ class MainWindow(QMainWindow):
         )
 
         self.smoothing_spin.setValue(
-            0.4
+            0.40
         )
 
         self.smoothing_spin.setSingleStep(
-            0.1
+            0.10
         )
 
         self.smoothing_spin.setSuffix(
             " mm"
         )
-
-        #
-        # Clearance
-        #
 
         self.clearance_spin = (
             QDoubleSpinBox()
@@ -329,7 +606,7 @@ class MainWindow(QMainWindow):
         )
 
         self.clearance_spin.setSingleStep(
-            0.1
+            0.10
         )
 
         self.clearance_spin.setSuffix(
@@ -356,6 +633,36 @@ class MainWindow(QMainWindow):
             self.smoothing_spin,
         )
 
+        self.pcb_edge_guard_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.pcb_edge_guard_spin.setRange(
+            0.0,
+            10.0,
+        )
+
+        self.pcb_edge_guard_spin.setDecimals(
+            2
+        )
+
+        self.pcb_edge_guard_spin.setValue(
+            1.50
+        )
+
+        self.pcb_edge_guard_spin.setSingleStep(
+            0.25
+        )
+
+        self.pcb_edge_guard_spin.setSuffix(
+            " mm"
+        )
+
+        form.addRow(
+            "PCB edge guard",
+            self.pcb_edge_guard_spin,
+        )
+
         form.addRow(
             "Clearance",
             self.clearance_spin,
@@ -365,9 +672,9 @@ class MainWindow(QMainWindow):
             envelope_group
         )
 
-        #
-        # Display
-        #
+        # =====================================================
+        # DISPLAY
+        # =====================================================
 
         display_group = QGroupBox(
             "Display"
@@ -377,32 +684,34 @@ class MainWindow(QMainWindow):
             display_group
         )
 
-        self.wireframe_checkbox = QCheckBox(
-            "Wireframe"
+        self.wireframe_checkbox = (
+            QCheckBox(
+                "Wireframe"
+            )
         )
 
         self.wireframe_checkbox.toggled.connect(
             self.viewport.set_wireframe
         )
 
-        self.original_button = QPushButton(
+        show_original = QPushButton(
             "Show original"
         )
 
-        self.original_button.clicked.connect(
+        show_original.clicked.connect(
             self.show_original
         )
 
-        self.wrap_button = QPushButton(
+        self.show_wrap_button = QPushButton(
             "Show wrap"
         )
 
-        self.wrap_button.clicked.connect(
-            self.show_wrap
+        self.show_wrap_button.setEnabled(
+            False
         )
 
-        self.wrap_button.setEnabled(
-            False
+        self.show_wrap_button.clicked.connect(
+            self.show_wrap
         )
 
         display_layout.addWidget(
@@ -410,20 +719,20 @@ class MainWindow(QMainWindow):
         )
 
         display_layout.addWidget(
-            self.original_button
+            show_original
         )
 
         display_layout.addWidget(
-            self.wrap_button
+            self.show_wrap_button
         )
 
         layout.addWidget(
             display_group
         )
 
-        #
-        # Generate
-        #
+        # =====================================================
+        # GENERATE / EXPORT
+        # =====================================================
 
         self.generate_button = QPushButton(
             "Generate Wrap"
@@ -441,14 +750,6 @@ class MainWindow(QMainWindow):
             self.generate_wrap
         )
 
-        layout.addWidget(
-            self.generate_button
-        )
-
-        #
-        # Export
-        #
-
         self.export_button = QPushButton(
             "Export STL"
         )
@@ -462,31 +763,504 @@ class MainWindow(QMainWindow):
         )
 
         layout.addWidget(
+            self.generate_button
+        )
+
+        layout.addWidget(
             self.export_button
         )
 
         layout.addStretch()
-
-        controls = QLabel(
-            "LEFT DRAG   Orbit\n"
-            "RIGHT DRAG  Pan\n"
-            "MIDDLE      Pan\n"
-            "SCROLL      Zoom"
-        )
-
-        controls.setObjectName(
-            "controls"
-        )
-
-        layout.addWidget(
-            controls
-        )
 
         self._apply_style(
             sidebar
         )
 
         return sidebar
+
+    # =========================================================
+    # FILES
+    # =========================================================
+
+    def open_model(self):
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open PCB model",
+            "",
+            (
+                "3D Mesh "
+                "(*.stl *.obj *.ply *.glb *.gltf);;"
+                "All files (*)"
+            ),
+        )
+
+        if not path:
+            return
+
+        try:
+
+            mesh = self.viewport.open_mesh(
+                path
+            )
+
+        except MeshLoadError as exc:
+
+            self.statusBar().showMessage(
+                str(exc)
+            )
+
+            return
+
+        self.generated_mesh = None
+
+        self.export_button.setEnabled(
+            False
+        )
+
+        self.show_wrap_button.setEnabled(
+            False
+        )
+
+        info = get_mesh_info(
+            mesh
+        )
+
+        self.model_label.setText(
+            Path(path).name
+        )
+
+        self.statusBar().showMessage(
+            (
+                f"{Path(path).name} | "
+                f"{info['width']:.2f} × "
+                f"{info['depth']:.2f} × "
+                f"{info['height']:.2f} mm | "
+                f"{info['triangles']:,} triangles"
+            )
+        )
+
+    def open_pth(self):
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open PTH drill file",
+            "",
+            "Excellon Drill (*.drl *.xln *.txt);;All files (*)",
+        )
+
+        if not path:
+            return
+
+        try:
+
+            holes = load_excellon(
+                path,
+                plated=True,
+            )
+
+        except Exception as exc:
+
+            self.statusBar().showMessage(
+                f"PTH error: {exc}"
+            )
+
+            raise
+
+        self.pth_path = path
+
+        self.pth_label.setText(
+            (
+                f"PTH: {Path(path).name}\n"
+                f"{len(holes)} drill positions"
+            )
+        )
+
+    def open_npth(self):
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open NPTH drill file",
+            "",
+            "Excellon Drill (*.drl *.xln *.txt);;All files (*)",
+        )
+
+        if not path:
+            return
+
+        try:
+
+            holes = load_excellon(
+                path,
+                plated=False,
+            )
+
+        except Exception as exc:
+
+            self.statusBar().showMessage(
+                f"NPTH error: {exc}"
+            )
+
+            raise
+
+        self.npth_path = path
+
+        self.npth_label.setText(
+            (
+                f"NPTH: {Path(path).name}\n"
+                f"{len(holes)} drill positions"
+            )
+        )
+
+    # =========================================================
+    # DRILLS
+    # =========================================================
+
+    def _raw_selected_drills(self):
+        """
+        ShrinkWrap koristi SAMO NPTH.
+
+        PTH/vias/THT drill rupe namerno ignorišemo:
+        rigid PCB reconstruction ih automatski popunjava.
+        """
+
+        if not self.npth_path:
+            return []
+
+        holes = load_excellon(
+            self.npth_path,
+            plated=False,
+        )
+
+        holes = deduplicate_holes(
+            holes
+        )
+
+        #
+        # Minimum diameter i dalje može biti koristan
+        # ako NPTH fajl sadrži neke sitne mehaničke otvore.
+        #
+        holes = filter_drills(
+            holes,
+
+            min_diameter_mm=(
+                self.min_drill_spin.value()
+            ),
+        )
+
+        return holes
+
+    def _transformed_drills(self):
+
+        holes = (
+            self._raw_selected_drills()
+        )
+
+        if not holes:
+            return []
+
+        center = drill_center(
+            holes
+        )
+
+        if center is None:
+            center_x = 0.0
+            center_y = 0.0
+        else:
+            center_x, center_y = (
+                center
+            )
+
+        return transform_drills(
+            holes,
+
+            offset_x=(
+                self.drill_offset_x.value()
+            ),
+
+            offset_y=(
+                self.drill_offset_y.value()
+            ),
+
+            flip_x=(
+                self.flip_x_checkbox.isChecked()
+            ),
+
+            flip_y=(
+                self.flip_y_checkbox.isChecked()
+            ),
+
+            center_x=center_x,
+            center_y=center_y,
+        )
+
+    def auto_center_drills(self):
+
+        if self.viewport.mesh is None:
+
+            self.statusBar().showMessage(
+                "Load the 3D model first."
+            )
+
+            return
+
+        holes = (
+            self._raw_selected_drills()
+        )
+
+        if not holes:
+
+            self.statusBar().showMessage(
+                "No enabled drill data."
+            )
+
+            return
+
+        drill_mid = drill_center(
+            holes
+        )
+
+        if drill_mid is None:
+            return
+
+        mesh_bounds = (
+            self.viewport.mesh.bounds
+        )
+
+        model_center_x = (
+            mesh_bounds[0][0]
+            +
+            mesh_bounds[1][0]
+        ) * 0.5
+
+        model_center_y = (
+            mesh_bounds[0][1]
+            +
+            mesh_bounds[1][1]
+        ) * 0.5
+
+        drill_center_x, drill_center_y = (
+            drill_mid
+        )
+
+        self.drill_offset_x.setValue(
+            model_center_x
+            -
+            drill_center_x
+        )
+
+        self.drill_offset_y.setValue(
+            model_center_y
+            -
+            drill_center_y
+        )
+
+        self.statusBar().showMessage(
+            (
+                "Drill coordinates centered. "
+                "Fine-tune X/Y offsets if necessary."
+            )
+        )
+
+    # =========================================================
+    # GENERATE
+    # =========================================================
+
+    def generate_wrap(self):
+
+        if self.viewport.mesh is None:
+
+            self.statusBar().showMessage(
+                "Load a model first."
+            )
+
+            return
+
+        try:
+
+            #
+            # ------------------------------------------------
+            # NPTH
+            # ------------------------------------------------
+            #
+
+            holes = (
+                self._transformed_drills()
+            )
+
+            #
+            # ------------------------------------------------
+            # TOP / BOTTOM PROJECTION + PCB DETECTION
+            # ------------------------------------------------
+            #
+
+            self.statusBar().showMessage(
+                "Projecting model and detecting rigid PCB..."
+            )
+
+            raw = generate_heightmap(
+                mesh=self.viewport.mesh,
+
+                resolution=(
+                    self.resolution_spin.value()
+                ),
+            )
+
+            #
+            # ------------------------------------------------
+            # COMPONENT CLOTH
+            # ------------------------------------------------
+            #
+
+            self.statusBar().showMessage(
+                (
+                    f"PCB detected: "
+                    f"{raw.pcb_thickness:.3f} mm — "
+                    f"building component envelope..."
+                )
+            )
+
+            envelope = build_envelope(
+                heightmap=raw,
+
+                smoothing_mm=(
+                    self.smoothing_spin.value()
+                ),
+
+                clearance_mm=(
+                    self.clearance_spin.value()
+                ),
+
+                bridge_mm=(
+                    self.bridge_spin.value()
+                ),
+
+                slope_degrees=(
+                    self.slope_spin.value()
+                ),
+
+                holes=holes,
+
+                hole_keepout_mm=(
+                    self.hole_keepout_spin.value()
+                ),
+            )
+
+            #
+            # ------------------------------------------------
+            # FINAL SOLID
+            # ------------------------------------------------
+            #
+
+            self.statusBar().showMessage(
+                (
+                    f"Building rigid PCB + cloth "
+                    f"with {len(holes)} NPTH holes..."
+                )
+            )
+
+            mesh = envelope_to_mesh(
+                envelope
+            )
+
+            self.generated_mesh = mesh
+
+            self.viewport.show_generated_mesh(
+                mesh
+            )
+
+            self.export_button.setEnabled(
+                True
+            )
+
+            self.show_wrap_button.setEnabled(
+                True
+            )
+
+            self.statusBar().showMessage(
+                (
+                    f"Wrap generated | "
+                    f"PCB {raw.pcb_thickness:.3f} mm | "
+                    f"{len(holes)} NPTH | "
+                    f"{len(mesh.vertices):,} vertices | "
+                    f"{len(mesh.faces):,} triangles"
+                )
+            )
+
+        except Exception as exc:
+
+            self.statusBar().showMessage(
+                f"Generation error: {exc}"
+            )
+
+            raise
+
+    # =========================================================
+    # DISPLAY / EXPORT
+    # =========================================================
+
+    def show_original(self):
+
+        self.viewport.show_original_mesh()
+
+    def show_wrap(self):
+
+        if self.generated_mesh is not None:
+
+            self.viewport.show_generated_mesh(
+                self.generated_mesh
+            )
+
+    def export_generated(self):
+
+        if self.generated_mesh is None:
+            return
+
+        path, selected = (
+            QFileDialog.getSaveFileName(
+                self,
+                "Export ShrinkWrap",
+                "shrinkwrap.stl",
+                (
+                    "STL (*.stl);;"
+                    "OBJ (*.obj);;"
+                    "PLY (*.ply);;"
+                    "GLB (*.glb)"
+                ),
+            )
+        )
+
+        if not path:
+            return
+
+        if not Path(
+            path
+        ).suffix:
+
+            if "OBJ" in selected:
+                path += ".obj"
+
+            elif "PLY" in selected:
+                path += ".ply"
+
+            elif "GLB" in selected:
+                path += ".glb"
+
+            else:
+                path += ".stl"
+
+        export_mesh(
+            self.generated_mesh,
+            path,
+        )
+
+        self.statusBar().showMessage(
+            f"Exported: {path}"
+        )
+
+    # =========================================================
+    # STYLE
+    # =========================================================
 
     def _apply_style(
         self,
@@ -512,12 +1286,6 @@ class MainWindow(QMainWindow):
             QLabel#subtitle {
                 color: #89919d;
                 margin-bottom: 8px;
-            }
-
-            QLabel#controls {
-                color: #747d89;
-                font-family: monospace;
-                font-size: 11px;
             }
 
             QGroupBox {
@@ -547,18 +1315,10 @@ class MainWindow(QMainWindow):
                 background-color: #303844;
             }
 
-            QPushButton:pressed {
-                background-color: #1e232a;
-            }
-
             QPushButton#primaryButton {
                 background-color: #356f54;
                 border-color: #478c6b;
                 font-weight: 600;
-            }
-
-            QPushButton#primaryButton:hover {
-                background-color: #3d7d60;
             }
 
             QPushButton:disabled {
@@ -580,266 +1340,3 @@ class MainWindow(QMainWindow):
             }
             """
         )
-
-    def open_model(self):
-
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open PCB model",
-            "",
-            (
-                "3D Mesh "
-                "(*.stl *.obj *.ply *.glb *.gltf);;"
-                "All files (*)"
-            ),
-        )
-
-        if not path:
-            return
-
-        try:
-
-            mesh = (
-                self.viewport.open_mesh(
-                    path
-                )
-            )
-
-        except MeshLoadError as exc:
-
-            self.statusBar().showMessage(
-                str(exc)
-            )
-
-            return
-
-        except Exception as exc:
-
-            self.statusBar().showMessage(
-                f"OpenGL error: {exc}"
-            )
-
-            raise
-
-        self.generated_mesh = None
-
-        self.export_button.setEnabled(
-            False
-        )
-
-        self.wrap_button.setEnabled(
-            False
-        )
-
-        info = get_mesh_info(
-            mesh
-        )
-
-        self.file_label.setText(
-            Path(path).name
-        )
-
-        self.statusBar().showMessage(
-            (
-                f"{Path(path).name}    |    "
-                f"{info['width']:.2f} × "
-                f"{info['depth']:.2f} × "
-                f"{info['height']:.2f} mm    |    "
-                f"{info['triangles']:,} triangles"
-            )
-        )
-
-    def generate_wrap(self):
-
-        if self.viewport.mesh is None:
-
-            self.statusBar().showMessage(
-                "Load a model first."
-            )
-
-            return
-
-        resolution = (
-            self.resolution_spin.value()
-        )
-
-        bridge = (
-            self.bridge_spin.value()
-        )
-
-        slope = (
-            self.slope_spin.value()
-        )
-
-        smoothing = (
-            self.smoothing_spin.value()
-        )
-
-        clearance = (
-            self.clearance_spin.value()
-        )
-
-        try:
-
-            self.statusBar().showMessage(
-                "Generating height map..."
-            )
-
-            #
-            # Mesh -> raw height map
-            #
-
-            raw_heightmap = (
-                generate_heightmap(
-                    mesh=self.viewport.mesh,
-                    resolution=resolution,
-                )
-            )
-
-            self.statusBar().showMessage(
-                "Generating cloth envelope..."
-            )
-
-            #
-            # Raw height map -> cloth envelope
-            #
-
-            envelope = (
-                build_envelope(
-                    heightmap=raw_heightmap,
-                    smoothing_mm=smoothing,
-                    clearance_mm=clearance,
-                    bridge_mm=bridge,
-                    slope_degrees=slope,
-                )
-            )
-
-            self.statusBar().showMessage(
-                "Generating triangle mesh..."
-            )
-
-            #
-            # Height map -> triangle mesh
-            #
-
-            mesh = envelope_to_mesh(
-                envelope
-            )
-
-            self.generated_mesh = mesh
-
-            #
-            # Show generated mesh
-            #
-
-            self.viewport.show_generated_mesh(
-                mesh
-            )
-
-            self.export_button.setEnabled(
-                True
-            )
-
-            self.wrap_button.setEnabled(
-                True
-            )
-
-            self.statusBar().showMessage(
-                (
-                    f"Wrap generated    |    "
-                    f"{len(mesh.vertices):,} vertices    |    "
-                    f"{len(mesh.faces):,} triangles"
-                )
-            )
-
-        except Exception as exc:
-
-            self.statusBar().showMessage(
-                f"Generation error: {exc}"
-            )
-
-            raise
-
-    def show_original(self):
-
-        if self.viewport.mesh is None:
-            return
-
-        self.viewport.show_original_mesh()
-
-        self.statusBar().showMessage(
-            "Showing original model"
-        )
-
-    def show_wrap(self):
-
-        if self.generated_mesh is None:
-            return
-
-        self.viewport.show_generated_mesh(
-            self.generated_mesh
-        )
-
-        self.statusBar().showMessage(
-            "Showing generated wrap"
-        )
-
-    def export_generated(self):
-
-        if self.generated_mesh is None:
-            return
-
-        path, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Export ShrinkWrap",
-            "shrinkwrap.stl",
-            (
-                "STL (*.stl);;"
-                "OBJ (*.obj);;"
-                "PLY (*.ply);;"
-                "GLB (*.glb)"
-            ),
-        )
-
-        if not path:
-            return
-
-        path_obj = Path(path)
-
-        #
-        # Ako korisnik nije uneo ekstenziju,
-        # dodaj je prema izabranom filteru.
-        #
-
-        if not path_obj.suffix:
-
-            if "OBJ" in selected_filter:
-                path += ".obj"
-
-            elif "PLY" in selected_filter:
-                path += ".ply"
-
-            elif "GLB" in selected_filter:
-                path += ".glb"
-
-            else:
-                path += ".stl"
-
-        try:
-
-            export_mesh(
-                self.generated_mesh,
-                path,
-            )
-
-            self.statusBar().showMessage(
-                f"Exported: {path}"
-            )
-
-        except Exception as exc:
-
-            self.statusBar().showMessage(
-                f"Export error: {exc}"
-            )
-
-            raise
