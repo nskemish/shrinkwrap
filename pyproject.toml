@@ -1,0 +1,20 @@
+[project]
+name = "shrinkwrap"
+version = "0.1.0"
+description = "PCB shrink-wrap height envelope generator"
+requires-python = ">=3.12"
+
+dependencies = [
+    "numpy>=2.0",
+    "pyside6>=6.8",
+    "pyopengl>=3.1.7",
+    "trimesh>=4.4",
+    "scipy>=1.18.0",
+    "networkx>=3.6.1",
+]
+
+[project.scripts]
+shrinkwrap = "main:main"
+
+[tool.uv]
+package = false
