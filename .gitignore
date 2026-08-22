@@ -44,3 +44,36 @@ dist/
 
 # Generated debug output
 debug_*
+
+# ============================================================
+# ShrinkWrap development backups
+# ============================================================
+.cleanup_backup_*/
+*.before_*
+*.bak
+*.backup
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+*.spec
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

@@ -312,6 +312,7 @@ class MainWindow(QMainWindow):
                 True
             )
 
+
             window.setStyleMask_(
                 window.styleMask()
                 |
