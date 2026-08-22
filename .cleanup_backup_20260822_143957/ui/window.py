@@ -2,13 +2,6 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 
-from PySide6.QtGui import (
-    QColor,
-    QLinearGradient,
-    QPainter,
-)
-
-
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -52,186 +45,6 @@ from core.export import (
 from ui.viewport import Viewport
 
 
-class ViewportFadeOverlay(QWidget):
-
-    WIDTH = 140
-
-    def __init__(
-        self,
-        parent=None,
-    ):
-        super().__init__(
-            parent
-        )
-
-        self.setAttribute(
-            Qt.WA_TransparentForMouseEvents,
-            True,
-        )
-
-        self.setAttribute(
-            Qt.WA_TranslucentBackground,
-            True,
-        )
-
-    def paintEvent(
-        self,
-        event,
-    ):
-        painter = QPainter(
-            self
-        )
-
-        #
-        # LEFT FADE
-        #
-        left_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            float(
-                self.width()
-            ),
-            0.0,
-        )
-
-        left_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                255,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.12,
-            QColor(
-                17,
-                18,
-                20,
-                235,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.32,
-            QColor(
-                17,
-                18,
-                20,
-                170,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.58,
-            QColor(
-                17,
-                18,
-                20,
-                85,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.82,
-            QColor(
-                17,
-                18,
-                20,
-                25,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
-
-        painter.fillRect(
-            self.rect(),
-            left_gradient,
-        )
-
-        #
-        # TOP FADE
-        #
-        top_height = 110.0
-
-        top_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            0.0,
-            top_height,
-        )
-
-        top_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                225,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.18,
-            QColor(
-                17,
-                18,
-                20,
-                185,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.42,
-            QColor(
-                17,
-                18,
-                20,
-                110,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.72,
-            QColor(
-                17,
-                18,
-                20,
-                35,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
-
-        painter.fillRect(
-            0,
-            0,
-            self.width(),
-            int(
-                top_height
-            ),
-            top_gradient,
-        )
-
-
 class MainWindow(QMainWindow):
 
     def __init__(self):
@@ -255,8 +68,6 @@ class MainWindow(QMainWindow):
         self._build_ui()
 
         self._configure_macos_window()
-
-        self.viewport_fade.raise_()
 
         self.statusBar().showMessage(
             "Ready"
@@ -445,50 +256,6 @@ class MainWindow(QMainWindow):
             self.viewport,
             1,
         )
-
-        self.viewport_fade = ViewportFadeOverlay(
-            root
-        )
-
-        self.viewport_fade.raise_()
-
-    def resizeEvent(
-        self,
-        event,
-    ):
-
-        super().resizeEvent(
-            event
-        )
-
-        if not hasattr(
-            self,
-            "viewport_fade",
-        ):
-            return
-
-        central = (
-            self.centralWidget()
-        )
-
-        if central is None:
-            return
-
-        viewport_pos = (
-            self.viewport.mapTo(
-                central,
-                self.viewport.rect().topLeft(),
-            )
-        )
-
-        self.viewport_fade.setGeometry(
-            viewport_pos.x(),
-            viewport_pos.y(),
-            ViewportFadeOverlay.WIDTH,
-            self.viewport.height(),
-        )
-
-        self.viewport_fade.raise_()
 
     def _create_sidebar(self):
 

@@ -82,10 +82,7 @@ class ViewportFadeOverlay(QWidget):
             self
         )
 
-        #
-        # LEFT FADE
-        #
-        left_gradient = QLinearGradient(
+        gradient = QLinearGradient(
             0.0,
             0.0,
             float(
@@ -94,7 +91,7 @@ class ViewportFadeOverlay(QWidget):
             0.0,
         )
 
-        left_gradient.setColorAt(
+        gradient.setColorAt(
             0.00,
             QColor(
                 17,
@@ -104,7 +101,7 @@ class ViewportFadeOverlay(QWidget):
             ),
         )
 
-        left_gradient.setColorAt(
+        gradient.setColorAt(
             0.12,
             QColor(
                 17,
@@ -114,7 +111,7 @@ class ViewportFadeOverlay(QWidget):
             ),
         )
 
-        left_gradient.setColorAt(
+        gradient.setColorAt(
             0.32,
             QColor(
                 17,
@@ -124,7 +121,7 @@ class ViewportFadeOverlay(QWidget):
             ),
         )
 
-        left_gradient.setColorAt(
+        gradient.setColorAt(
             0.58,
             QColor(
                 17,
@@ -134,7 +131,7 @@ class ViewportFadeOverlay(QWidget):
             ),
         )
 
-        left_gradient.setColorAt(
+        gradient.setColorAt(
             0.82,
             QColor(
                 17,
@@ -144,7 +141,7 @@ class ViewportFadeOverlay(QWidget):
             ),
         )
 
-        left_gradient.setColorAt(
+        gradient.setColorAt(
             1.00,
             QColor(
                 17,
@@ -156,79 +153,7 @@ class ViewportFadeOverlay(QWidget):
 
         painter.fillRect(
             self.rect(),
-            left_gradient,
-        )
-
-        #
-        # TOP FADE
-        #
-        top_height = 110.0
-
-        top_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            0.0,
-            top_height,
-        )
-
-        top_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                225,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.18,
-            QColor(
-                17,
-                18,
-                20,
-                185,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.42,
-            QColor(
-                17,
-                18,
-                20,
-                110,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.72,
-            QColor(
-                17,
-                18,
-                20,
-                35,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
-
-        painter.fillRect(
-            0,
-            0,
-            self.width(),
-            int(
-                top_height
-            ),
-            top_gradient,
+            gradient,
         )
 
 

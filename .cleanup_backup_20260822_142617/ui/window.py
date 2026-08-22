@@ -1,13 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-
-from PySide6.QtGui import (
-    QColor,
-    QLinearGradient,
-    QPainter,
-)
-
+from PySide6.QtCore import Qt, QPoint
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -20,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QToolButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -52,9 +46,9 @@ from core.export import (
 from ui.viewport import Viewport
 
 
-class ViewportFadeOverlay(QWidget):
+class WindowTitleBar(QFrame):
 
-    WIDTH = 140
+    HEIGHT = 46
 
     def __init__(
         self,
@@ -64,171 +58,228 @@ class ViewportFadeOverlay(QWidget):
             parent
         )
 
+        self.setObjectName(
+            "windowTitleBar"
+        )
+
+        self.setFixedHeight(
+            self.HEIGHT
+        )
+
         self.setAttribute(
+            Qt.WA_StyledBackground,
+            True,
+        )
+
+        self._drag_offset = QPoint()
+
+        layout = QHBoxLayout(
+            self
+        )
+
+        layout.setContentsMargins(
+            14,
+            0,
+            14,
+            0,
+        )
+
+        layout.setSpacing(
+            8
+        )
+
+        self.close_button = (
+            self._make_window_button(
+                "closeButton"
+            )
+        )
+
+        self.minimize_button = (
+            self._make_window_button(
+                "minimizeButton"
+            )
+        )
+
+        self.zoom_button = (
+            self._make_window_button(
+                "zoomButton"
+            )
+        )
+
+        self.close_button.clicked.connect(
+            lambda:
+            self.window().close()
+        )
+
+        self.minimize_button.clicked.connect(
+            lambda:
+            self.window().showMinimized()
+        )
+
+        self.zoom_button.clicked.connect(
+            self._toggle_maximize
+        )
+
+        layout.addWidget(
+            self.close_button
+        )
+
+        layout.addWidget(
+            self.minimize_button
+        )
+
+        layout.addWidget(
+            self.zoom_button
+        )
+
+        layout.addStretch()
+
+        self.title_label = QLabel(
+            "ShrinkWrap"
+        )
+
+        self.title_label.setObjectName(
+            "windowTitle"
+        )
+
+        self.title_label.setAttribute(
             Qt.WA_TransparentForMouseEvents,
             True,
         )
 
-        self.setAttribute(
-            Qt.WA_TranslucentBackground,
+        layout.addWidget(
+            self.title_label
+        )
+
+        layout.addStretch()
+
+        #
+        # Približno balansira traffic lights sa leve strane
+        # da naslov ostane vizuelno centralan.
+        #
+        spacer = QWidget()
+
+        spacer.setFixedWidth(
+            68
+        )
+
+        spacer.setAttribute(
+            Qt.WA_TransparentForMouseEvents,
             True,
         )
 
-    def paintEvent(
+        layout.addWidget(
+            spacer
+        )
+
+    def _make_window_button(
         self,
-        event,
-    ):
-        painter = QPainter(
+        object_name: str,
+    ) -> QToolButton:
+
+        button = QToolButton(
             self
         )
 
-        #
-        # LEFT FADE
-        #
-        left_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            float(
-                self.width()
-            ),
-            0.0,
+        button.setObjectName(
+            object_name
         )
 
-        left_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                255,
-            ),
+        button.setFixedSize(
+            13,
+            13,
         )
 
-        left_gradient.setColorAt(
-            0.12,
-            QColor(
-                17,
-                18,
-                20,
-                235,
-            ),
+        button.setCursor(
+            Qt.ArrowCursor
         )
 
-        left_gradient.setColorAt(
-            0.32,
-            QColor(
-                17,
-                18,
-                20,
-                170,
-            ),
+        return button
+
+    def _toggle_maximize(self):
+
+        window = self.window()
+
+        if window.isMaximized():
+
+            window.showNormal()
+
+        else:
+
+            window.showMaximized()
+
+    def mousePressEvent(
+        self,
+        event,
+    ):
+
+        if (
+            event.button()
+            ==
+            Qt.LeftButton
+        ):
+
+            self._drag_offset = (
+                event.globalPosition().toPoint()
+                -
+                self.window().frameGeometry().topLeft()
+            )
+
+            event.accept()
+            return
+
+        super().mousePressEvent(
+            event
         )
 
-        left_gradient.setColorAt(
-            0.58,
-            QColor(
-                17,
-                18,
-                20,
-                85,
-            ),
+    def mouseMoveEvent(
+        self,
+        event,
+    ):
+
+        if (
+            event.buttons()
+            &
+            Qt.LeftButton
+        ):
+
+            window = self.window()
+
+            if window.isMaximized():
+
+                return
+
+            window.move(
+                event.globalPosition().toPoint()
+                -
+                self._drag_offset
+            )
+
+            event.accept()
+            return
+
+        super().mouseMoveEvent(
+            event
         )
 
-        left_gradient.setColorAt(
-            0.82,
-            QColor(
-                17,
-                18,
-                20,
-                25,
-            ),
-        )
+    def mouseDoubleClickEvent(
+        self,
+        event,
+    ):
 
-        left_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
+        if (
+            event.button()
+            ==
+            Qt.LeftButton
+        ):
 
-        painter.fillRect(
-            self.rect(),
-            left_gradient,
-        )
+            self._toggle_maximize()
 
-        #
-        # TOP FADE
-        #
-        top_height = 110.0
+            event.accept()
+            return
 
-        top_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            0.0,
-            top_height,
-        )
-
-        top_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                225,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.18,
-            QColor(
-                17,
-                18,
-                20,
-                185,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.42,
-            QColor(
-                17,
-                18,
-                20,
-                110,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.72,
-            QColor(
-                17,
-                18,
-                20,
-                35,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
-
-        painter.fillRect(
-            0,
-            0,
-            self.width(),
-            int(
-                top_height
-            ),
-            top_gradient,
+        super().mouseDoubleClickEvent(
+            event
         )
 
 
@@ -239,6 +290,20 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(
             "ShrinkWrap"
+        )
+
+        #
+        # Custom edge-to-edge window chrome.
+        #
+        self.setWindowFlags(
+            self.windowFlags()
+            |
+            Qt.FramelessWindowHint
+        )
+
+        self.setAttribute(
+            Qt.WA_TranslucentBackground,
+            False,
         )
 
         self.resize(
@@ -254,113 +319,8 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
 
-        self._configure_macos_window()
-
-        self.viewport_fade.raise_()
-
         self.statusBar().showMessage(
             "Ready"
-        )
-
-    def _configure_macos_window(
-        self,
-    ):
-        """
-        Native macOS window:
-
-        - native rounded corners
-        - native traffic lights
-        - hidden title
-        - transparent titlebar
-        - content extends underneath titlebar
-        """
-
-        import sys
-
-        if sys.platform != "darwin":
-            return
-
-        #
-        # Qt native handle mora već da postoji.
-        #
-        self.winId()
-
-        try:
-            from ctypes import c_void_p
-            import objc
-            from AppKit import (
-                NSWindowStyleMaskFullSizeContentView,
-                NSWindowTitleHidden,
-            )
-
-            view = objc.objc_object(
-                c_void_p=int(
-                    self.winId()
-                )
-            )
-
-            window = view.window()
-
-            if window is None:
-                return
-
-            window.setTitleVisibility_(
-                NSWindowTitleHidden
-            )
-
-            window.setTitlebarAppearsTransparent_(
-                True
-            )
-
-            window.setStyleMask_(
-                window.styleMask()
-                |
-                NSWindowStyleMaskFullSizeContentView
-            )
-
-            window.setMovableByWindowBackground_(
-                True
-            )
-
-        except Exception as exc:
-
-            print(
-                "[window] native macOS chrome unavailable:",
-                exc,
-            )
-
-    def mousePressEvent(
-        self,
-        event,
-    ):
-        """
-        Native macOS titlebar drag area.
-
-        Content ide ispod transparentnog titlebara, pa eksplicitno
-        kažemo Qt-u da drag u gornjoj zoni pokrene system window move.
-        """
-
-        if (
-            event.button()
-            ==
-            Qt.LeftButton
-            and
-            event.position().y()
-            <=
-            52
-        ):
-            handle = self.windowHandle()
-
-            if (
-                handle is not None
-                and
-                handle.startSystemMove()
-            ):
-                event.accept()
-                return
-
-        super().mousePressEvent(
-            event
         )
 
     def _build_ui(self):
@@ -446,11 +406,17 @@ class MainWindow(QMainWindow):
             1,
         )
 
-        self.viewport_fade = ViewportFadeOverlay(
+        #
+        # Floating chrome.
+        #
+        # Body/viewport počinje na y=0, pa viewport fizički
+        # postoji ISPOD titlebar-a i ide skroz do vrha prozora.
+        #
+        self.title_bar = WindowTitleBar(
             root
         )
 
-        self.viewport_fade.raise_()
+        self.title_bar.raise_()
 
     def resizeEvent(
         self,
@@ -461,34 +427,25 @@ class MainWindow(QMainWindow):
             event
         )
 
-        if not hasattr(
+        if hasattr(
             self,
-            "viewport_fade",
+            "title_bar",
         ):
-            return
 
-        central = (
-            self.centralWidget()
-        )
-
-        if central is None:
-            return
-
-        viewport_pos = (
-            self.viewport.mapTo(
-                central,
-                self.viewport.rect().topLeft(),
+            central = (
+                self.centralWidget()
             )
-        )
 
-        self.viewport_fade.setGeometry(
-            viewport_pos.x(),
-            viewport_pos.y(),
-            ViewportFadeOverlay.WIDTH,
-            self.viewport.height(),
-        )
+            if central is not None:
 
-        self.viewport_fade.raise_()
+                self.title_bar.setGeometry(
+                    0,
+                    0,
+                    central.width(),
+                    WindowTitleBar.HEIGHT,
+                )
+
+                self.title_bar.raise_()
 
     def _create_sidebar(self):
 
@@ -1633,6 +1590,56 @@ class MainWindow(QMainWindow):
             QMainWindow,
             QWidget#windowRoot {
                 background: #111214;
+            }
+
+            QFrame#windowTitleBar {
+                background: rgba(22, 22, 24, 218);
+                border: none;
+                border-bottom: 1px solid rgba(255,255,255,18);
+            }
+
+            QLabel#windowTitle {
+                color: rgba(245,245,247,205);
+                background: transparent;
+
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            QToolButton#closeButton,
+            QToolButton#minimizeButton,
+            QToolButton#zoomButton {
+                border: none;
+                border-radius: 6px;
+                min-width: 13px;
+                max-width: 13px;
+                min-height: 13px;
+                max-height: 13px;
+                padding: 0px;
+            }
+
+            QToolButton#closeButton {
+                background: #ff5f57;
+            }
+
+            QToolButton#minimizeButton {
+                background: #febc2e;
+            }
+
+            QToolButton#zoomButton {
+                background: #28c840;
+            }
+
+            QToolButton#closeButton:hover {
+                background: #ff736c;
+            }
+
+            QToolButton#minimizeButton:hover {
+                background: #ffca4d;
+            }
+
+            QToolButton#zoomButton:hover {
+                background: #43d65a;
             }
 
             QStatusBar {

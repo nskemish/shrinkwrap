@@ -2,13 +2,6 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 
-from PySide6.QtGui import (
-    QColor,
-    QLinearGradient,
-    QPainter,
-)
-
-
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -41,6 +34,7 @@ from core.envelope import (
 
 from core.drill import (
     drill_center,
+    filter_drills,
     load_excellon,
     transform_drills,
 )
@@ -50,186 +44,6 @@ from core.export import (
 )
 
 from ui.viewport import Viewport
-
-
-class ViewportFadeOverlay(QWidget):
-
-    WIDTH = 140
-
-    def __init__(
-        self,
-        parent=None,
-    ):
-        super().__init__(
-            parent
-        )
-
-        self.setAttribute(
-            Qt.WA_TransparentForMouseEvents,
-            True,
-        )
-
-        self.setAttribute(
-            Qt.WA_TranslucentBackground,
-            True,
-        )
-
-    def paintEvent(
-        self,
-        event,
-    ):
-        painter = QPainter(
-            self
-        )
-
-        #
-        # LEFT FADE
-        #
-        left_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            float(
-                self.width()
-            ),
-            0.0,
-        )
-
-        left_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                255,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.12,
-            QColor(
-                17,
-                18,
-                20,
-                235,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.32,
-            QColor(
-                17,
-                18,
-                20,
-                170,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.58,
-            QColor(
-                17,
-                18,
-                20,
-                85,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            0.82,
-            QColor(
-                17,
-                18,
-                20,
-                25,
-            ),
-        )
-
-        left_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
-
-        painter.fillRect(
-            self.rect(),
-            left_gradient,
-        )
-
-        #
-        # TOP FADE
-        #
-        top_height = 110.0
-
-        top_gradient = QLinearGradient(
-            0.0,
-            0.0,
-            0.0,
-            top_height,
-        )
-
-        top_gradient.setColorAt(
-            0.00,
-            QColor(
-                17,
-                18,
-                20,
-                225,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.18,
-            QColor(
-                17,
-                18,
-                20,
-                185,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.42,
-            QColor(
-                17,
-                18,
-                20,
-                110,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            0.72,
-            QColor(
-                17,
-                18,
-                20,
-                35,
-            ),
-        )
-
-        top_gradient.setColorAt(
-            1.00,
-            QColor(
-                17,
-                18,
-                20,
-                0,
-            ),
-        )
-
-        painter.fillRect(
-            0,
-            0,
-            self.width(),
-            int(
-                top_height
-            ),
-            top_gradient,
-        )
 
 
 class MainWindow(QMainWindow):
@@ -254,122 +68,13 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
 
-        self._configure_macos_window()
-
-        self.viewport_fade.raise_()
-
         self.statusBar().showMessage(
             "Ready"
-        )
-
-    def _configure_macos_window(
-        self,
-    ):
-        """
-        Native macOS window:
-
-        - native rounded corners
-        - native traffic lights
-        - hidden title
-        - transparent titlebar
-        - content extends underneath titlebar
-        """
-
-        import sys
-
-        if sys.platform != "darwin":
-            return
-
-        #
-        # Qt native handle mora već da postoji.
-        #
-        self.winId()
-
-        try:
-            from ctypes import c_void_p
-            import objc
-            from AppKit import (
-                NSWindowStyleMaskFullSizeContentView,
-                NSWindowTitleHidden,
-            )
-
-            view = objc.objc_object(
-                c_void_p=int(
-                    self.winId()
-                )
-            )
-
-            window = view.window()
-
-            if window is None:
-                return
-
-            window.setTitleVisibility_(
-                NSWindowTitleHidden
-            )
-
-            window.setTitlebarAppearsTransparent_(
-                True
-            )
-
-            window.setStyleMask_(
-                window.styleMask()
-                |
-                NSWindowStyleMaskFullSizeContentView
-            )
-
-            window.setMovableByWindowBackground_(
-                True
-            )
-
-        except Exception as exc:
-
-            print(
-                "[window] native macOS chrome unavailable:",
-                exc,
-            )
-
-    def mousePressEvent(
-        self,
-        event,
-    ):
-        """
-        Native macOS titlebar drag area.
-
-        Content ide ispod transparentnog titlebara, pa eksplicitno
-        kažemo Qt-u da drag u gornjoj zoni pokrene system window move.
-        """
-
-        if (
-            event.button()
-            ==
-            Qt.LeftButton
-            and
-            event.position().y()
-            <=
-            52
-        ):
-            handle = self.windowHandle()
-
-            if (
-                handle is not None
-                and
-                handle.startSystemMove()
-            ):
-                event.accept()
-                return
-
-        super().mousePressEvent(
-            event
         )
 
     def _build_ui(self):
 
         root = QWidget()
-
-        root.setObjectName(
-            "windowRoot"
-        )
 
         self.setCentralWidget(
             root
@@ -401,40 +106,34 @@ class MainWindow(QMainWindow):
             Qt.ScrollBarAsNeeded
         )
 
-        scroll.setFixedWidth(340)
+        scroll.setFixedWidth(350)
         scroll.setFrameShape(QFrame.NoFrame)
 
         scroll.setStyleSheet(
             """
             QScrollArea {
-                background: #111214;
+                background: #14171c;
                 border: none;
             }
 
             QScrollBar:vertical {
-                background: transparent;
-                width: 7px;
-                margin: 4px 1px 4px 0px;
+                background: #14171c;
+                width: 10px;
             }
 
             QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 45);
-                min-height: 32px;
-                border-radius: 3px;
+                background: #39414c;
+                min-height: 30px;
+                border-radius: 5px;
             }
 
             QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 75);
+                background: #4a5563;
             }
 
             QScrollBar::add-line:vertical,
             QScrollBar::sub-line:vertical {
                 height: 0px;
-            }
-
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: transparent;
             }
             """
         )
@@ -446,56 +145,12 @@ class MainWindow(QMainWindow):
             1,
         )
 
-        self.viewport_fade = ViewportFadeOverlay(
-            root
-        )
-
-        self.viewport_fade.raise_()
-
-    def resizeEvent(
-        self,
-        event,
-    ):
-
-        super().resizeEvent(
-            event
-        )
-
-        if not hasattr(
-            self,
-            "viewport_fade",
-        ):
-            return
-
-        central = (
-            self.centralWidget()
-        )
-
-        if central is None:
-            return
-
-        viewport_pos = (
-            self.viewport.mapTo(
-                central,
-                self.viewport.rect().topLeft(),
-            )
-        )
-
-        self.viewport_fade.setGeometry(
-            viewport_pos.x(),
-            viewport_pos.y(),
-            ViewportFadeOverlay.WIDTH,
-            self.viewport.height(),
-        )
-
-        self.viewport_fade.raise_()
-
     def _create_sidebar(self):
 
         sidebar = QFrame()
 
         sidebar.setMinimumWidth(
-            320
+            330
         )
 
         sidebar.setObjectName(
@@ -506,18 +161,12 @@ class MainWindow(QMainWindow):
             sidebar
         )
 
-        #
-        # Top margin ostavlja prostor custom titlebaru.
-        #
         layout.setContentsMargins(
-            18,
-            58,
-            18,
-            18,
+            20, 20, 20, 20
         )
 
         layout.setSpacing(
-            14
+            12
         )
 
         # =====================================================
@@ -652,6 +301,31 @@ class MainWindow(QMainWindow):
             drill_settings
         )
 
+        self.min_drill_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.min_drill_spin.setRange(
+            0.0,
+            20.0,
+        )
+
+        self.min_drill_spin.setDecimals(
+            3
+        )
+
+        self.min_drill_spin.setValue(
+            2.50
+        )
+
+        self.min_drill_spin.setSingleStep(
+            0.10
+        )
+
+        self.min_drill_spin.setSuffix(
+            " mm"
+        )
+
         self.drill_offset_x = (
             QDoubleSpinBox()
         )
@@ -704,6 +378,11 @@ class MainWindow(QMainWindow):
 
         auto_center_button.clicked.connect(
             self.auto_center_drills
+        )
+
+        drill_form.addRow(
+            "Minimum Ø",
+            self.min_drill_spin,
         )
 
         self.hole_keepout_spin = (
@@ -1134,6 +813,18 @@ class MainWindow(QMainWindow):
             plated=False,
         )
 
+        #
+        # Minimum diameter i dalje može biti koristan
+        # ako NPTH fajl sadrži neke sitne mehaničke otvore.
+        #
+        holes = filter_drills(
+            holes,
+
+            min_diameter_mm=(
+                self.min_drill_spin.value()
+            ),
+        )
+
         return holes
 
     def _transformed_drills(self):
@@ -1453,196 +1144,76 @@ class MainWindow(QMainWindow):
         widget,
     ):
 
-        #
-        # Sidebar style.
-        #
         widget.setStyleSheet(
             """
             #sidebar {
-                background: #111214;
-                color: #f5f5f7;
-                border: none;
+                background-color: #14171c;
+                color: #e8ebef;
             }
 
             QLabel {
-                color: #f5f5f7;
-                background: transparent;
-                font-size: 13px;
+                color: #e8ebef;
             }
 
             QLabel#title {
-                color: #ffffff;
-                font-size: 22px;
+                font-size: 23px;
                 font-weight: 700;
-                letter-spacing: 1px;
             }
 
             QLabel#subtitle {
-                color: #8e8e93;
-                font-size: 12px;
+                color: #89919d;
                 margin-bottom: 8px;
             }
 
             QGroupBox {
-                color: #f5f5f7;
-
-                background: #1c1c1e;
-
-                border: 1px solid #2c2c2e;
-                border-radius: 12px;
-
-                margin-top: 14px;
-                padding:
-                    14px
-                    12px
-                    12px
-                    12px;
-
-                font-size: 12px;
+                color: #dce1e8;
+                border: 1px solid #303640;
+                border-radius: 7px;
+                margin-top: 10px;
+                padding-top: 12px;
                 font-weight: 600;
             }
 
             QGroupBox::title {
                 subcontrol-origin: margin;
-                subcontrol-position: top left;
-
-                left: 12px;
-
-                padding:
-                    0px
-                    6px;
-
-                color: #98989d;
-
-                background: #111214;
-
-                font-size: 11px;
-                font-weight: 600;
-            }
-
-            QLineEdit,
-            QDoubleSpinBox {
-                min-height: 28px;
-
-                color: #f5f5f7;
-                background: #2c2c2e;
-
-                border: 1px solid #3a3a3c;
-                border-radius: 7px;
-
-                padding:
-                    2px
-                    8px;
-
-                selection-background-color: #0a84ff;
-            }
-
-            QDoubleSpinBox:hover {
-                border-color: #545458;
-            }
-
-            QDoubleSpinBox:focus {
-                border-color: #0a84ff;
-            }
-
-            QDoubleSpinBox::up-button,
-            QDoubleSpinBox::down-button {
-                width: 16px;
-                border: none;
-                background: transparent;
-            }
-
-            QCheckBox {
-                color: #e5e5ea;
-                spacing: 8px;
-                font-size: 12px;
-            }
-
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-
-                border-radius: 4px;
-                border: 1px solid #48484a;
-
-                background: #2c2c2e;
-            }
-
-            QCheckBox::indicator:hover {
-                border-color: #636366;
-            }
-
-            QCheckBox::indicator:checked {
-                background: #0a84ff;
-                border-color: #0a84ff;
+                left: 10px;
+                padding: 0 4px;
             }
 
             QPushButton {
-                min-height: 30px;
-
-                color: #f5f5f7;
-                background: #2c2c2e;
-
-                border: 1px solid #3a3a3c;
-                border-radius: 8px;
-
-                padding:
-                    2px
-                    12px;
-
-                font-size: 12px;
-                font-weight: 500;
+                background-color: #252b34;
+                color: #edf0f4;
+                border: 1px solid #39414c;
+                border-radius: 6px;
+                padding: 8px;
             }
 
             QPushButton:hover {
-                background: #363638;
-                border-color: #4a4a4d;
-            }
-
-            QPushButton:pressed {
-                background: #252527;
-            }
-
-            QPushButton:disabled {
-                color: #636366;
-                background: #1c1c1e;
-                border-color: #2c2c2e;
+                background-color: #303844;
             }
 
             QPushButton#primaryButton {
-                color: white;
-                background: #0a84ff;
-                border-color: #0a84ff;
+                background-color: #356f54;
+                border-color: #478c6b;
                 font-weight: 600;
             }
 
-            QPushButton#primaryButton:hover {
-                background: #2793ff;
+            QPushButton:disabled {
+                color: #626a75;
+                background-color: #1b1e23;
+                border-color: #292e35;
+            }
+
+            QDoubleSpinBox {
+                background-color: #1d2128;
+                color: #e8ebef;
+                border: 1px solid #353c46;
+                border-radius: 5px;
+                padding: 4px;
+            }
+
+            QCheckBox {
+                color: #dfe3e8;
             }
             """
         )
-
-        #
-        # Window chrome style mora da bude na celom prozoru,
-        # ne samo sidebar-u.
-        #
-        self.setStyleSheet(
-            self.styleSheet()
-            +
-            """
-            QMainWindow,
-            QWidget#windowRoot {
-                background: #111214;
-            }
-
-            QStatusBar {
-                color: #8e8e93;
-                background: #111214;
-
-                border-top: 1px solid #252527;
-
-                font-size: 11px;
-            }
-            """
-        )
-
