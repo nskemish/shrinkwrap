@@ -21,12 +21,22 @@ class Envelope:
     bottom: np.ndarray
 
     #
-    # Finalna XY oblast materijala:
+    # Rigidni PCB footprint PRE oduzimanja NPTH.
     #
-    #     PCB
-    #     minus NPTH
+    pcb_mask: np.ndarray
+
+    #
+    # Raster preview finalnog solid-a.
+    #
+    # Finalni mesher više NE koristi njegov pixel edge
+    # direktno za geometriju granice.
     #
     solid_mask: np.ndarray
+
+    #
+    # Tačne NPTH geometrije iz Excellon-a.
+    #
+    holes: tuple[DrillHole, ...]
 
     min_x: float
     min_y: float
@@ -250,19 +260,30 @@ def build_envelope(
     #
     if holes and hole_keepout_mm > 0.0:
 
-        keepout_mask = _make_hole_mask(
+        keepout_weight = _make_hole_keepout_weight(
             heightmap=heightmap,
             holes=holes,
-            extra_radius_mm=hole_keepout_mm,
+            keepout_mm=hole_keepout_mm,
+
+            #
+            # Mali anti-alias / transition pojas.
+            # Ne menja nominalnu keepout dimenziju,
+            # samo uklanja raster stepenice.
+            #
+            feather_mm=max(
+                0.15,
+                heightmap.resolution * 1.5,
+            ),
         )
 
-        top_cloth[
-            keepout_mask
-        ] = 0.0
-
-        bottom_cloth[
-            keepout_mask
-        ] = 0.0
+        #
+        # weight:
+        #
+        #   0.0 = rigid PCB, nema cloth-a
+        #   1.0 = puni cloth
+        #
+        top_cloth *= keepout_weight
+        bottom_cloth *= keepout_weight
 
     #
     # ========================================================
@@ -343,7 +364,11 @@ def build_envelope(
             np.float32
         ),
 
+        pcb_mask=pcb_mask.copy(),
+
         solid_mask=solid_mask,
+
+        holes=tuple(holes),
 
         min_x=heightmap.min_x,
         min_y=heightmap.min_y,
@@ -762,6 +787,148 @@ def _mask_boundary(
     )
 
 
+def _make_hole_keepout_weight(
+    heightmap: HeightMap,
+    holes: list[DrillHole],
+    keepout_mm: float,
+    feather_mm: float,
+) -> np.ndarray:
+    """
+    Analitički, sub-pixel NPTH keepout.
+
+    Za svaku rupu:
+
+        inner_radius =
+            hole_radius + keepout_mm
+
+    Unutar inner_radius:
+        cloth = 0
+
+    U feather pojasu:
+        smoothstep 0 -> 1
+
+    Van njega:
+        cloth ostaje netaknut.
+
+    Ovo ne rasterizuje krug kao bool masku, pa keepout
+    više nema oštar pixel-step prelaz.
+    """
+
+    h, w = heightmap.raw_top.shape
+
+    result = np.ones(
+        (h, w),
+        dtype=np.float32,
+    )
+
+    if not holes:
+        return result
+
+    xs = (
+        heightmap.min_x
+        +
+        np.arange(
+            w,
+            dtype=np.float64,
+        )
+        *
+        heightmap.resolution
+    )
+
+    ys = (
+        heightmap.min_y
+        +
+        np.arange(
+            h,
+            dtype=np.float64,
+        )
+        *
+        heightmap.resolution
+    )
+
+    xx = xs[None, :]
+    yy = ys[:, None]
+
+    feather_mm = max(
+        1e-6,
+        float(feather_mm),
+    )
+
+    for hole in holes:
+
+        radius = (
+            float(hole.diameter)
+            *
+            0.5
+        )
+
+        inner_radius = (
+            radius
+            +
+            float(keepout_mm)
+        )
+
+        distance = np.sqrt(
+            (
+                xx
+                -
+                float(hole.x)
+            )
+            ** 2
+            +
+            (
+                yy
+                -
+                float(hole.y)
+            )
+            ** 2
+        )
+
+        #
+        # t:
+        #
+        # <= 0     unutra
+        # 0..1     feather
+        # >= 1     puni cloth
+        #
+        t = (
+            distance
+            -
+            inner_radius
+        ) / feather_mm
+
+        t = np.clip(
+            t,
+            0.0,
+            1.0,
+        )
+
+        #
+        # smoothstep
+        #
+        weight = (
+            t * t
+            *
+            (
+                3.0
+                -
+                2.0 * t
+            )
+        )
+
+        #
+        # Ako ima više rupa, najjači keepout pobeđuje.
+        #
+        result = np.minimum(
+            result,
+            weight.astype(
+                np.float32
+            ),
+        )
+
+    return result
+
+
 def _make_hole_mask(
     heightmap: HeightMap,
     holes: list[DrillHole],
@@ -945,524 +1112,967 @@ def _make_hole_mask(
 
 def envelope_to_mesh(
     envelope: Envelope,
+    boundary_quality: int = 1,
 ) -> trimesh.Trimesh:
     """
-    Raster-cell mesher.
+    High-resolution final mesher.
 
-    VAŽNA KONVENCIJA:
+    VAŽNO:
 
-        solid_mask[y, x]
+        envelope.resolution
 
-    ne predstavlja vertex, već jednu fizičku XY ćeliju
-    centriranu na ray sample-u (x, y).
+    ostaje rezolucija RAY/HEIGHT simulacije.
 
-    Time finalni mesh direktno prati PCB masku.
+    Finalni mesh koristi:
 
-    Nema više:
+        mesh_resolution =
+            envelope.resolution / boundary_quality
 
-        cell = cornerA & cornerB & cornerC & cornerD
+    Na primer:
 
-    što je ranije erodiralo PCB edge i uništavalo
-    konkavne Edge.Cut oblike.
+        ray resolution     = 0.20 mm
+        boundary_quality   = 4
+        mesh resolution    = 0.05 mm
 
-    Ista ćelijska topologija automatski rešava:
+    Height, cloth i PCB detection se NE računaju ponovo.
+    Samo se finalna implicitna geometrija supersampluje.
 
-        - spoljašnji PCB edge
-        - konkavne useke
-        - NPTH rupe
+    PCB edge:
+        signed-distance iz pcb_mask
+
+    NPTH:
+        exact analitički krug iz Excellon-a
     """
 
-    top = np.asarray(
+    boundary_quality = max(
+        1,
+        int(
+            boundary_quality
+        ),
+    )
+
+    top_coarse = np.asarray(
         envelope.top,
-        dtype=np.float32,
+        dtype=np.float64,
     )
 
-    bottom = np.asarray(
+    bottom_coarse = np.asarray(
         envelope.bottom,
-        dtype=np.float32,
+        dtype=np.float64,
     )
 
-    solid = np.asarray(
-        envelope.solid_mask,
+    pcb_mask = np.asarray(
+        envelope.pcb_mask,
         dtype=bool,
     )
 
     if (
-        top.shape != bottom.shape
+        top_coarse.shape
+        !=
+        bottom_coarse.shape
         or
-        top.shape != solid.shape
+        top_coarse.shape
+        !=
+        pcb_mask.shape
     ):
         raise ValueError(
             "Envelope arrays have incompatible shapes."
         )
 
-    h, w = solid.shape
+    coarse_h, coarse_w = (
+        pcb_mask.shape
+    )
 
-    resolution = float(
+    coarse_resolution = float(
         envelope.resolution
     )
 
-    half = (
-        resolution
+    mesh_resolution = (
+        coarse_resolution
+        /
+        boundary_quality
+    )
+
+    #
+    # ========================================================
+    # COARSE PCB SIGNED DISTANCE
+    # ========================================================
+    #
+    # Positive = PCB
+    # Negative = outside
+    #
+
+    inside_distance = (
+        ndimage.distance_transform_edt(
+            pcb_mask
+        )
         *
-        0.5
+        coarse_resolution
+    )
+
+    outside_distance = (
+        ndimage.distance_transform_edt(
+            ~pcb_mask
+        )
+        *
+        coarse_resolution
+    )
+
+    pcb_phi_coarse = (
+        inside_distance
+        -
+        outside_distance
+    ).astype(
+        np.float64
     )
 
     #
     # ========================================================
-    # HEIGHT SAMPLING AT CELL CORNERS
+    # FINE GRID
     # ========================================================
     #
-    # top/bottom su vrednosti u CENTRU raster ćelije.
-    #
-    # Za zajednički corner uzimamo prosek svih susednih
-    # solid cells koje ga dodiruju.
-    #
-    # Tako adjacent cells koriste ISTI Z vertex i površina
-    # ostaje potpuno spojena.
+    # Čuvamo potpuno isti physical extent.
     #
 
-    corner_top_sum = np.zeros(
-        (h + 1, w + 1),
-        dtype=np.float64,
+    fine_w = (
+        (coarse_w - 1)
+        *
+        boundary_quality
+        +
+        1
     )
 
-    corner_bottom_sum = np.zeros(
-        (h + 1, w + 1),
-        dtype=np.float64,
+    fine_h = (
+        (coarse_h - 1)
+        *
+        boundary_quality
+        +
+        1
     )
 
-    corner_count = np.zeros(
-        (h + 1, w + 1),
-        dtype=np.int32,
+    #
+    # Fine-grid coordinate izražen u COARSE pixel units.
+    #
+
+    fine_gx = (
+        np.arange(
+            fine_w,
+            dtype=np.float64,
+        )
+        /
+        boundary_quality
     )
 
-    ys, xs = np.nonzero(
-        solid
+    fine_gy = (
+        np.arange(
+            fine_h,
+            dtype=np.float64,
+        )
+        /
+        boundary_quality
     )
 
-    for y, x in zip(
-        ys,
-        xs,
-    ):
+    #
+    # ========================================================
+    # BILINEAR RESAMPLING
+    # ========================================================
 
-        tz = float(
-            top[y, x]
+    def resample_grid(
+        source: np.ndarray,
+    ) -> np.ndarray:
+
+        #
+        # Prvo X interpolacija.
+        #
+
+        x0 = np.floor(
+            fine_gx
+        ).astype(
+            np.int64
         )
 
-        bz = float(
-            bottom[y, x]
+        x1 = np.minimum(
+            x0 + 1,
+            coarse_w - 1,
+        )
+
+        tx = (
+            fine_gx
+            -
+            x0
+        )
+
+        temp = (
+            source[
+                :,
+                x0
+            ]
+            *
+            (
+                1.0
+                -
+                tx[
+                    None,
+                    :
+                ]
+            )
+            +
+            source[
+                :,
+                x1
+            ]
+            *
+            tx[
+                None,
+                :
+            ]
         )
 
         #
-        # četiri cornera ove ćelije
+        # Onda Y interpolacija.
         #
-        for cy, cx in (
-            (y, x),
-            (y, x + 1),
-            (y + 1, x),
-            (y + 1, x + 1),
-        ):
 
-            corner_top_sum[
-                cy,
-                cx
-            ] += tz
+        y0 = np.floor(
+            fine_gy
+        ).astype(
+            np.int64
+        )
 
-            corner_bottom_sum[
-                cy,
-                cx
-            ] += bz
+        y1 = np.minimum(
+            y0 + 1,
+            coarse_h - 1,
+        )
 
-            corner_count[
-                cy,
-                cx
-            ] += 1
+        ty = (
+            fine_gy
+            -
+            y0
+        )
 
-    used_corner = (
-        corner_count
-        >
-        0
+        result = (
+            temp[
+                y0,
+                :
+            ]
+            *
+            (
+                1.0
+                -
+                ty[
+                    :,
+                    None
+                ]
+            )
+            +
+            temp[
+                y1,
+                :
+            ]
+            *
+            ty[
+                :,
+                None
+            ]
+        )
+
+        return np.asarray(
+            result,
+            dtype=np.float64,
+        )
+
+    top = resample_grid(
+        top_coarse
     )
 
-    corner_top = np.zeros(
-        (h + 1, w + 1),
-        dtype=np.float32,
+    bottom = resample_grid(
+        bottom_coarse
     )
 
-    corner_bottom = np.zeros(
-        (h + 1, w + 1),
-        dtype=np.float32,
-    )
-
-    corner_top[
-        used_corner
-    ] = (
-        corner_top_sum[
-            used_corner
-        ]
-        /
-        corner_count[
-            used_corner
-        ]
-    )
-
-    corner_bottom[
-        used_corner
-    ] = (
-        corner_bottom_sum[
-            used_corner
-        ]
-        /
-        corner_count[
-            used_corner
-        ]
+    phi = resample_grid(
+        pcb_phi_coarse
     )
 
     #
     # ========================================================
-    # SHARED VERTICES
+    # EXACT NPTH
     # ========================================================
     #
+    # Ovo je bitno:
+    #
+    # rupa NE dolazi iz rasterizovanog npth_mask.
+    #
+    # Njena granica dolazi direktno iz:
+    #
+    #     x, y, diameter
+    #
+    # iz Excellon fajla.
+    #
 
-    vertices = []
+    if envelope.holes:
 
-    top_index = np.full(
-        (h + 1, w + 1),
-        -1,
-        dtype=np.int64,
-    )
+        xs = (
+            envelope.min_x
+            +
+            np.arange(
+                fine_w,
+                dtype=np.float64,
+            )
+            *
+            mesh_resolution
+        )
 
-    bottom_index = np.full(
-        (h + 1, w + 1),
-        -1,
-        dtype=np.int64,
-    )
-
-    for y in range(
-        h + 1
-    ):
-
-        #
-        # mask sample y=0 je centar prve ćelije.
-        #
-        # Zato corner počinje pola resolution-a ranije.
-        #
-        py = (
+        ys = (
             envelope.min_y
             +
-            y * resolution
-            -
-            half
+            np.arange(
+                fine_h,
+                dtype=np.float64,
+            )
+            *
+            mesh_resolution
         )
 
-        for x in range(
-            w + 1
-        ):
+        xx = xs[
+            None,
+            :
+        ]
 
-            if not used_corner[
-                y,
-                x
-            ]:
-                continue
+        yy = ys[
+            :,
+            None
+        ]
 
-            px = (
-                envelope.min_x
-                +
-                x * resolution
+        for hole in envelope.holes:
+
+            radius = (
+                float(
+                    hole.diameter
+                )
+                *
+                0.5
+            )
+
+            #
+            # Positive van rupe.
+            # Negative unutar rupe.
+            #
+
+            hole_phi = (
+                np.sqrt(
+                    (
+                        xx
+                        -
+                        float(
+                            hole.x
+                        )
+                    )
+                    ** 2
+                    +
+                    (
+                        yy
+                        -
+                        float(
+                            hole.y
+                        )
+                    )
+                    ** 2
+                )
                 -
-                half
+                radius
             )
 
-            top_index[
-                y,
-                x
-            ] = len(
-                vertices
+            #
+            # final solid =
+            #
+            # PCB ∩ outside-hole
+            #
+
+            phi = np.minimum(
+                phi,
+                hole_phi,
             )
 
-            vertices.append(
-                [
-                    px,
-                    py,
-                    float(
-                        corner_top[y, x]
-                    ),
-                ]
-            )
+    #
+    # ========================================================
+    # MARCHING / SUBPIXEL HELPERS
+    # ========================================================
 
-            bottom_index[
-                y,
-                x
-            ] = len(
-                vertices
-            )
-
-            vertices.append(
-                [
-                    px,
-                    py,
-                    float(
-                        corner_bottom[y, x]
-                    ),
-                ]
-            )
-
+    vertices = []
     faces = []
 
-    #
-    # ========================================================
-    # TOP + BOTTOM
-    # ========================================================
-    #
+    vertex_cache = {}
 
-    for y, x in zip(
-        ys,
-        xs,
+    def get_vertex(
+        gx: float,
+        gy: float,
+        side: int,
+    ) -> int:
+
+        key = (
+            side,
+            round(
+                gx,
+                9,
+            ),
+            round(
+                gy,
+                9,
+            ),
+        )
+
+        if key in vertex_cache:
+            return vertex_cache[
+                key
+            ]
+
+        #
+        # gx/gy su FINE grid coordinates.
+        #
+
+        x = (
+            envelope.min_x
+            +
+            gx
+            *
+            mesh_resolution
+        )
+
+        y = (
+            envelope.min_y
+            +
+            gy
+            *
+            mesh_resolution
+        )
+
+        #
+        # Bilinear Z interpolation unutar FINE height grid-a.
+        #
+
+        x0 = int(
+            np.floor(
+                gx
+            )
+        )
+
+        y0 = int(
+            np.floor(
+                gy
+            )
+        )
+
+        x0 = max(
+            0,
+            min(
+                fine_w - 1,
+                x0,
+            ),
+        )
+
+        y0 = max(
+            0,
+            min(
+                fine_h - 1,
+                y0,
+            ),
+        )
+
+        x1 = min(
+            x0 + 1,
+            fine_w - 1,
+        )
+
+        y1 = min(
+            y0 + 1,
+            fine_h - 1,
+        )
+
+        tx = float(
+            np.clip(
+                gx - x0,
+                0.0,
+                1.0,
+            )
+        )
+
+        ty = float(
+            np.clip(
+                gy - y0,
+                0.0,
+                1.0,
+            )
+        )
+
+        data = (
+            top
+            if side == 0
+            else bottom
+        )
+
+        z = float(
+            data[y0, x0]
+            *
+            (1.0 - tx)
+            *
+            (1.0 - ty)
+
+            +
+
+            data[y0, x1]
+            *
+            tx
+            *
+            (1.0 - ty)
+
+            +
+
+            data[y1, x0]
+            *
+            (1.0 - tx)
+            *
+            ty
+
+            +
+
+            data[y1, x1]
+            *
+            tx
+            *
+            ty
+        )
+
+        index = len(
+            vertices
+        )
+
+        vertices.append(
+            [
+                x,
+                y,
+                z,
+            ]
+        )
+
+        vertex_cache[
+            key
+        ] = index
+
+        return index
+
+    def zero_cross(
+        p0,
+        v0,
+        p1,
+        v1,
     ):
 
-        ta = top_index[
-            y,
-            x
-        ]
-
-        tb = top_index[
-            y,
-            x + 1
-        ]
-
-        tc = top_index[
-            y + 1,
-            x
-        ]
-
-        td = top_index[
-            y + 1,
-            x + 1
-        ]
-
-        ba = bottom_index[
-            y,
-            x
-        ]
-
-        bb = bottom_index[
-            y,
-            x + 1
-        ]
-
-        bc = bottom_index[
-            y + 1,
-            x
-        ]
-
-        bd = bottom_index[
-            y + 1,
-            x + 1
-        ]
-
-        #
-        # TOP
-        #
-
-        faces.append(
-            [
-                ta,
-                tb,
-                td,
-            ]
+        denominator = (
+            v0
+            -
+            v1
         )
 
-        faces.append(
-            [
-                ta,
-                td,
-                tc,
-            ]
-        )
+        if abs(
+            denominator
+        ) < 1e-12:
 
-        #
-        # BOTTOM
-        #
-
-        faces.append(
-            [
-                ba,
-                bd,
-                bb,
-            ]
-        )
-
-        faces.append(
-            [
-                ba,
-                bc,
-                bd,
-            ]
-        )
-
-    #
-    # ========================================================
-    # BOUNDARY WALLS
-    # ========================================================
-    #
-    # Boundary nije izveden iz triangulacije.
-    #
-    # Direktno gledamo:
-    #
-    #     postoji li susedna SOLID CELL?
-    #
-    # Ako ne postoji -> pravi zid.
-    #
-    # Zato ovo identično radi za:
-    #
-    #     spoljašnji PCB edge
-    #     konkavni notch
-    #     NPTH
-    #
-
-    def add_wall(
-        t1,
-        t2,
-        b1,
-        b2,
-        reverse=False,
-    ):
-
-        if reverse:
-
-            faces.append(
-                [
-                    t1,
-                    t2,
-                    b2,
-                ]
-            )
-
-            faces.append(
-                [
-                    t1,
-                    b2,
-                    b1,
-                ]
-            )
+            t = 0.5
 
         else:
 
-            faces.append(
-                [
-                    t1,
-                    b2,
-                    t2,
-                ]
+            t = (
+                v0
+                /
+                denominator
             )
 
-            faces.append(
-                [
-                    t1,
-                    b1,
-                    b2,
-                ]
+        t = float(
+            np.clip(
+                t,
+                0.0,
+                1.0,
             )
+        )
 
-    for y, x in zip(
-        ys,
-        xs,
+        return (
+            p0[0]
+            +
+            (
+                p1[0]
+                -
+                p0[0]
+            )
+            *
+            t,
+
+            p0[1]
+            +
+            (
+                p1[1]
+                -
+                p0[1]
+            )
+            *
+            t,
+        )
+
+    def clip_positive(
+        points,
+        values,
     ):
 
-        ta = top_index[y, x]
-        tb = top_index[y, x + 1]
-        tc = top_index[y + 1, x]
-        td = top_index[y + 1, x + 1]
+        output_points = []
+        output_values = []
 
-        ba = bottom_index[y, x]
-        bb = bottom_index[y, x + 1]
-        bc = bottom_index[y + 1, x]
-        bd = bottom_index[y + 1, x + 1]
+        count = len(
+            points
+        )
 
-        #
-        # -Y
-        #
-
-        if (
-            y == 0
-            or
-            not solid[
-                y - 1,
-                x
-            ]
+        for i in range(
+            count
         ):
 
-            add_wall(
+            current_p = points[i]
+            current_v = values[i]
+
+            previous_p = points[
+                i - 1
+            ]
+
+            previous_v = values[
+                i - 1
+            ]
+
+            current_inside = (
+                current_v
+                >=
+                0.0
+            )
+
+            previous_inside = (
+                previous_v
+                >=
+                0.0
+            )
+
+            if current_inside:
+
+                if not previous_inside:
+
+                    output_points.append(
+                        zero_cross(
+                            previous_p,
+                            previous_v,
+                            current_p,
+                            current_v,
+                        )
+                    )
+
+                    output_values.append(
+                        0.0
+                    )
+
+                output_points.append(
+                    current_p
+                )
+
+                output_values.append(
+                    current_v
+                )
+
+            elif previous_inside:
+
+                output_points.append(
+                    zero_cross(
+                        previous_p,
+                        previous_v,
+                        current_p,
+                        current_v,
+                    )
+                )
+
+                output_values.append(
+                    0.0
+                )
+
+        return (
+            output_points,
+            output_values,
+        )
+
+    #
+    # ========================================================
+    # MESH CELLS
+    # ========================================================
+
+    boundary_edges = {}
+
+    def edge_key(
+        a,
+        b,
+    ):
+
+        pa = (
+            round(
+                a[0],
+                9,
+            ),
+            round(
+                a[1],
+                9,
+            ),
+        )
+
+        pb = (
+            round(
+                b[0],
+                9,
+            ),
+            round(
+                b[1],
+                9,
+            ),
+        )
+
+        return tuple(
+            sorted(
+                (
+                    pa,
+                    pb,
+                )
+            )
+        )
+
+    active_cells = 0
+    boundary_cells = 0
+
+    for y in range(
+        fine_h - 1
+    ):
+
+        for x in range(
+            fine_w - 1
+        ):
+
+            points = [
+                (
+                    float(x),
+                    float(y),
+                ),
+                (
+                    float(x + 1),
+                    float(y),
+                ),
+                (
+                    float(x + 1),
+                    float(y + 1),
+                ),
+                (
+                    float(x),
+                    float(y + 1),
+                ),
+            ]
+
+            values = [
+                float(
+                    phi[
+                        y,
+                        x
+                    ]
+                ),
+
+                float(
+                    phi[
+                        y,
+                        x + 1
+                    ]
+                ),
+
+                float(
+                    phi[
+                        y + 1,
+                        x + 1
+                    ]
+                ),
+
+                float(
+                    phi[
+                        y + 1,
+                        x
+                    ]
+                ),
+            ]
+
+            #
+            # Potpuno outside.
+            #
+
+            if max(
+                values
+            ) < 0.0:
+                continue
+
+            polygon, polygon_values = (
+                clip_positive(
+                    points,
+                    values,
+                )
+            )
+
+            if len(
+                polygon
+            ) < 3:
+                continue
+
+            active_cells += 1
+
+            if not all(
+                value
+                >
+                0.0
+                for value in values
+            ):
+
+                boundary_cells += 1
+
+            top_indices = [
+                get_vertex(
+                    point[0],
+                    point[1],
+                    0,
+                )
+                for point
+                in polygon
+            ]
+
+            bottom_indices = [
+                get_vertex(
+                    point[0],
+                    point[1],
+                    1,
+                )
+                for point
+                in polygon
+            ]
+
+            #
+            # Convex polygon → fan triangulation.
+            #
+
+            for i in range(
+                1,
+                len(
+                    polygon
+                )
+                -
+                1,
+            ):
+
+                faces.append(
+                    [
+                        top_indices[0],
+                        top_indices[i],
+                        top_indices[i + 1],
+                    ]
+                )
+
+                faces.append(
+                    [
+                        bottom_indices[0],
+                        bottom_indices[i + 1],
+                        bottom_indices[i],
+                    ]
+                )
+
+            #
+            # phi=0 edge je boundary wall.
+            #
+
+            count = len(
+                polygon
+            )
+
+            for i in range(
+                count
+            ):
+
+                j = (
+                    i + 1
+                ) % count
+
+                if (
+                    abs(
+                        polygon_values[i]
+                    )
+                    <=
+                    1e-10
+                    and
+                    abs(
+                        polygon_values[j]
+                    )
+                    <=
+                    1e-10
+                ):
+
+                    a = polygon[i]
+                    b = polygon[j]
+
+                    boundary_edges[
+                        edge_key(
+                            a,
+                            b,
+                        )
+                    ] = (
+                        a,
+                        b,
+                    )
+
+    #
+    # ========================================================
+    # WALLS
+    # ========================================================
+
+    for a, b in boundary_edges.values():
+
+        ta = get_vertex(
+            a[0],
+            a[1],
+            0,
+        )
+
+        tb = get_vertex(
+            b[0],
+            b[1],
+            0,
+        )
+
+        ba = get_vertex(
+            a[0],
+            a[1],
+            1,
+        )
+
+        bb = get_vertex(
+            b[0],
+            b[1],
+            1,
+        )
+
+        faces.append(
+            [
                 ta,
-                tb,
                 ba,
                 bb,
-                reverse=True,
-            )
-
-        #
-        # +Y
-        #
-
-        if (
-            y == h - 1
-            or
-            not solid[
-                y + 1,
-                x
             ]
-        ):
+        )
 
-            add_wall(
-                tc,
-                td,
-                bc,
-                bd,
-                reverse=False,
-            )
-
-        #
-        # -X
-        #
-
-        if (
-            x == 0
-            or
-            not solid[
-                y,
-                x - 1
-            ]
-        ):
-
-            add_wall(
-                tc,
+        faces.append(
+            [
                 ta,
-                bc,
-                ba,
-                reverse=False,
-            )
-
-        #
-        # +X
-        #
-
-        if (
-            x == w - 1
-            or
-            not solid[
-                y,
-                x + 1
-            ]
-        ):
-
-            add_wall(
-                tb,
-                td,
                 bb,
-                bd,
-                reverse=False,
-            )
+                tb,
+            ]
+        )
 
     if not vertices:
         raise ValueError(
@@ -1491,8 +2101,12 @@ def envelope_to_mesh(
     mesh.remove_unreferenced_vertices()
 
     print(
-        "[mesh] raster-cell topology | "
-        f"solid cells={np.count_nonzero(solid):,} | "
+        "[mesh] supersampled | "
+        f"ray={coarse_resolution:.4f} mm | "
+        f"mesh={mesh_resolution:.4f} mm | "
+        f"quality={boundary_quality}x | "
+        f"cells={active_cells:,} | "
+        f"boundary={boundary_cells:,} | "
         f"{len(mesh.vertices):,} vertices | "
         f"{len(mesh.faces):,} triangles"
     )
