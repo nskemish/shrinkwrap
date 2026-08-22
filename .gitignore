@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv / Python version
+.python-version
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Generated binaries / packages
+*.app
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary / backup files
+*.bak
+*.backup
+*.tmp
+*.before_*
+
+# Logs
+*.log
+
+# Generated debug output
+debug_*
