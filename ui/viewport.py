@@ -485,7 +485,8 @@ class Viewport(
         self.makeCurrent()
 
         self._upload_mesh(
-            mesh
+            mesh,
+            flat_shading=True,
         )
 
         self.doneCurrent()
@@ -499,24 +500,85 @@ class Viewport(
     def _upload_mesh(
         self,
         mesh,
+        flat_shading: bool = False,
     ):
 
         self._destroy_mesh_buffers()
 
-        vertices = np.asarray(
-            mesh.vertices,
-            dtype=np.float32,
-        )
+        if flat_shading:
+            #
+            # =================================================
+            # FLAT SHADING
+            # =================================================
+            #
+            # STL nema smooth-group semantiku.
+            #
+            # Svaki triangle dobija svoja 3 verteksa i
+            # jednu face normalu.
+            #
+            # Tako se normale NE prosečavaju preko oštrih
+            # ivica IC kućišta, PCB-a, konektora itd.
+            #
 
-        normals = np.asarray(
-            mesh.vertex_normals,
-            dtype=np.float32,
-        )
+            faces = np.asarray(
+                mesh.faces,
+                dtype=np.int64,
+            )
 
-        indices = np.asarray(
-            mesh.faces,
-            dtype=np.uint32,
-        )
+            source_vertices = np.asarray(
+                mesh.vertices,
+                dtype=np.float32,
+            )
+
+            face_normals = np.asarray(
+                mesh.face_normals,
+                dtype=np.float32,
+            )
+
+            vertices = source_vertices[
+                faces.reshape(-1)
+            ]
+
+            normals = np.repeat(
+                face_normals,
+                3,
+                axis=0,
+            )
+
+            #
+            # Sada je svaki triangle nezavisan.
+            #
+            indices = np.arange(
+                len(vertices),
+                dtype=np.uint32,
+            ).reshape(
+                -1,
+                3,
+            )
+
+        else:
+            #
+            # =================================================
+            # SMOOTH SHADING
+            # =================================================
+            #
+            # Koristimo za generated wrap.
+            #
+
+            vertices = np.asarray(
+                mesh.vertices,
+                dtype=np.float32,
+            )
+
+            normals = np.asarray(
+                mesh.vertex_normals,
+                dtype=np.float32,
+            )
+
+            indices = np.asarray(
+                mesh.faces,
+                dtype=np.uint32,
+            )
 
         #
         # XYZ + normal XYZ
@@ -928,7 +990,8 @@ class Viewport(
         self.makeCurrent()
 
         self._upload_mesh(
-            mesh
+            mesh,
+            flat_shading=False,
         )
 
         self.doneCurrent()
@@ -944,7 +1007,8 @@ class Viewport(
         self.makeCurrent()
 
         self._upload_mesh(
-            self.mesh
+            self.mesh,
+            flat_shading=True,
         )
 
         self.doneCurrent()
