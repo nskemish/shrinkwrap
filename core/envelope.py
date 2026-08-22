@@ -26,14 +26,6 @@ class Envelope:
     pcb_mask: np.ndarray
 
     #
-    # Raster preview finalnog solid-a.
-    #
-    # Finalni mesher više NE koristi njegov pixel edge
-    # direktno za geometriju granice.
-    #
-    solid_mask: np.ndarray
-
-    #
     # Tačne NPTH geometrije iz Excellon-a.
     #
     holes: tuple[DrillHole, ...]
@@ -330,24 +322,6 @@ def build_envelope(
             bottom_has_relief
         ] -= clearance_mm
 
-    #
-    # ========================================================
-    # NPTH HOLES
-    # ========================================================
-    #
-
-    npth_mask = _make_hole_mask(
-        heightmap=heightmap,
-        holes=holes,
-        extra_radius_mm=0.0,
-    )
-
-    solid_mask = (
-        pcb_mask
-        &
-        ~npth_mask
-    )
-
     print(
         "[envelope] "
         f"top relief max={float(np.max(top_cloth)):.3f} mm | "
@@ -365,8 +339,6 @@ def build_envelope(
         ),
 
         pcb_mask=pcb_mask.copy(),
-
-        solid_mask=solid_mask,
 
         holes=tuple(holes),
 
@@ -929,182 +901,6 @@ def _make_hole_keepout_weight(
     return result
 
 
-def _make_hole_mask(
-    heightmap: HeightMap,
-    holes: list[DrillHole],
-    extra_radius_mm: float,
-) -> np.ndarray:
-    """
-    Rasterizuje samo eksplicitne NPTH drill rupe.
-    """
-
-    h, w = (
-        heightmap.raw_top.shape
-    )
-
-    mask = np.zeros(
-        (h, w),
-        dtype=bool,
-    )
-
-    if not holes:
-        return mask
-
-    for hole in holes:
-
-        radius = max(
-            0.0,
-
-            hole.diameter
-            *
-            0.5
-            +
-            extra_radius_mm,
-        )
-
-        ix0 = max(
-            0,
-
-            int(
-                np.floor(
-                    (
-                        hole.x
-                        -
-                        radius
-                        -
-                        heightmap.min_x
-                    )
-                    /
-                    heightmap.resolution
-                )
-            ),
-        )
-
-        ix1 = min(
-            w - 1,
-
-            int(
-                np.ceil(
-                    (
-                        hole.x
-                        +
-                        radius
-                        -
-                        heightmap.min_x
-                    )
-                    /
-                    heightmap.resolution
-                )
-            ),
-        )
-
-        iy0 = max(
-            0,
-
-            int(
-                np.floor(
-                    (
-                        hole.y
-                        -
-                        radius
-                        -
-                        heightmap.min_y
-                    )
-                    /
-                    heightmap.resolution
-                )
-            ),
-        )
-
-        iy1 = min(
-            h - 1,
-
-            int(
-                np.ceil(
-                    (
-                        hole.y
-                        +
-                        radius
-                        -
-                        heightmap.min_y
-                    )
-                    /
-                    heightmap.resolution
-                )
-            ),
-        )
-
-        if (
-            ix0 > ix1
-            or
-            iy0 > iy1
-        ):
-            continue
-
-        xs = (
-            heightmap.min_x
-            +
-            np.arange(
-                ix0,
-                ix1 + 1,
-                dtype=np.float64,
-            )
-            *
-            heightmap.resolution
-        )
-
-        ys = (
-            heightmap.min_y
-            +
-            np.arange(
-                iy0,
-                iy1 + 1,
-                dtype=np.float64,
-            )
-            *
-            heightmap.resolution
-        )
-
-        dx = (
-            xs[
-                None,
-                :
-            ]
-            -
-            hole.x
-        )
-
-        dy = (
-            ys[
-                :,
-                None
-            ]
-            -
-            hole.y
-        )
-
-        local = (
-            dx * dx
-            +
-            dy * dy
-            <=
-            radius * radius
-        )
-
-        target = mask[
-            iy0:
-            iy1 + 1,
-            ix0:
-            ix1 + 1,
-        ]
-
-        target[
-            local
-        ] = True
-
-    return mask
-
-
 # ============================================================
 # MESH
 # ============================================================
@@ -1112,51 +908,28 @@ def _make_hole_mask(
 
 def envelope_to_mesh(
     envelope: Envelope,
-    boundary_quality: int = 1,
 ) -> trimesh.Trimesh:
     """
-    High-resolution final mesher.
+    Finalni implicitni mesher.
 
-    VAŽNO:
-
-        envelope.resolution
-
-    ostaje rezolucija RAY/HEIGHT simulacije.
-
-    Finalni mesh koristi:
-
-        mesh_resolution =
-            envelope.resolution / boundary_quality
-
-    Na primer:
-
-        ray resolution     = 0.20 mm
-        boundary_quality   = 4
-        mesh resolution    = 0.05 mm
-
-    Height, cloth i PCB detection se NE računaju ponovo.
-    Samo se finalna implicitna geometrija supersampluje.
+    Koristi direktno envelope grid rezoluciju.
 
     PCB edge:
-        signed-distance iz pcb_mask
+        signed-distance iz pcb_mask-a
 
     NPTH:
-        exact analitički krug iz Excellon-a
+        analitički krugovi iz Excellon podataka
+
+    Boundary ćelije se seku na sub-pixel phi=0 poziciji,
+    pa finalna granica nije samo prost kvadratni raster.
     """
 
-    boundary_quality = max(
-        1,
-        int(
-            boundary_quality
-        ),
-    )
-
-    top_coarse = np.asarray(
+    top = np.asarray(
         envelope.top,
         dtype=np.float64,
     )
 
-    bottom_coarse = np.asarray(
+    bottom = np.asarray(
         envelope.bottom,
         dtype=np.float64,
     )
@@ -1167,11 +940,11 @@ def envelope_to_mesh(
     )
 
     if (
-        top_coarse.shape
+        top.shape
         !=
-        bottom_coarse.shape
+        bottom.shape
         or
-        top_coarse.shape
+        top.shape
         !=
         pcb_mask.shape
     ):
@@ -1179,23 +952,15 @@ def envelope_to_mesh(
             "Envelope arrays have incompatible shapes."
         )
 
-    coarse_h, coarse_w = (
-        pcb_mask.shape
-    )
+    h, w = pcb_mask.shape
 
-    coarse_resolution = float(
+    resolution = float(
         envelope.resolution
-    )
-
-    mesh_resolution = (
-        coarse_resolution
-        /
-        boundary_quality
     )
 
     #
     # ========================================================
-    # COARSE PCB SIGNED DISTANCE
+    # PCB SIGNED DISTANCE
     # ========================================================
     #
     # Positive = PCB
@@ -1207,7 +972,7 @@ def envelope_to_mesh(
             pcb_mask
         )
         *
-        coarse_resolution
+        resolution
     )
 
     outside_distance = (
@@ -1215,10 +980,10 @@ def envelope_to_mesh(
             ~pcb_mask
         )
         *
-        coarse_resolution
+        resolution
     )
 
-    pcb_phi_coarse = (
+    phi = (
         inside_distance
         -
         outside_distance
@@ -1228,184 +993,17 @@ def envelope_to_mesh(
 
     #
     # ========================================================
-    # FINE GRID
-    # ========================================================
-    #
-    # Čuvamo potpuno isti physical extent.
-    #
-
-    fine_w = (
-        (coarse_w - 1)
-        *
-        boundary_quality
-        +
-        1
-    )
-
-    fine_h = (
-        (coarse_h - 1)
-        *
-        boundary_quality
-        +
-        1
-    )
-
-    #
-    # Fine-grid coordinate izražen u COARSE pixel units.
-    #
-
-    fine_gx = (
-        np.arange(
-            fine_w,
-            dtype=np.float64,
-        )
-        /
-        boundary_quality
-    )
-
-    fine_gy = (
-        np.arange(
-            fine_h,
-            dtype=np.float64,
-        )
-        /
-        boundary_quality
-    )
-
-    #
-    # ========================================================
-    # BILINEAR RESAMPLING
-    # ========================================================
-
-    def resample_grid(
-        source: np.ndarray,
-    ) -> np.ndarray:
-
-        #
-        # Prvo X interpolacija.
-        #
-
-        x0 = np.floor(
-            fine_gx
-        ).astype(
-            np.int64
-        )
-
-        x1 = np.minimum(
-            x0 + 1,
-            coarse_w - 1,
-        )
-
-        tx = (
-            fine_gx
-            -
-            x0
-        )
-
-        temp = (
-            source[
-                :,
-                x0
-            ]
-            *
-            (
-                1.0
-                -
-                tx[
-                    None,
-                    :
-                ]
-            )
-            +
-            source[
-                :,
-                x1
-            ]
-            *
-            tx[
-                None,
-                :
-            ]
-        )
-
-        #
-        # Onda Y interpolacija.
-        #
-
-        y0 = np.floor(
-            fine_gy
-        ).astype(
-            np.int64
-        )
-
-        y1 = np.minimum(
-            y0 + 1,
-            coarse_h - 1,
-        )
-
-        ty = (
-            fine_gy
-            -
-            y0
-        )
-
-        result = (
-            temp[
-                y0,
-                :
-            ]
-            *
-            (
-                1.0
-                -
-                ty[
-                    :,
-                    None
-                ]
-            )
-            +
-            temp[
-                y1,
-                :
-            ]
-            *
-            ty[
-                :,
-                None
-            ]
-        )
-
-        return np.asarray(
-            result,
-            dtype=np.float64,
-        )
-
-    top = resample_grid(
-        top_coarse
-    )
-
-    bottom = resample_grid(
-        bottom_coarse
-    )
-
-    phi = resample_grid(
-        pcb_phi_coarse
-    )
-
-    #
-    # ========================================================
     # EXACT NPTH
     # ========================================================
     #
-    # Ovo je bitno:
+    # Rupe se ne rasterizuju kao bool mask.
     #
-    # rupa NE dolazi iz rasterizovanog npth_mask.
+    # Koristimo analitičko distance polje:
     #
-    # Njena granica dolazi direktno iz:
+    #     distance(center) - radius
     #
-    #     x, y, diameter
-    #
-    # iz Excellon fajla.
+    # Positive = van rupe
+    # Negative = unutar rupe
     #
 
     if envelope.holes:
@@ -1414,22 +1012,22 @@ def envelope_to_mesh(
             envelope.min_x
             +
             np.arange(
-                fine_w,
+                w,
                 dtype=np.float64,
             )
             *
-            mesh_resolution
+            resolution
         )
 
         ys = (
             envelope.min_y
             +
             np.arange(
-                fine_h,
+                h,
                 dtype=np.float64,
             )
             *
-            mesh_resolution
+            resolution
         )
 
         xx = xs[
@@ -1451,11 +1049,6 @@ def envelope_to_mesh(
                 *
                 0.5
             )
-
-            #
-            # Positive van rupe.
-            # Negative unutar rupe.
-            #
 
             hole_phi = (
                 np.sqrt(
@@ -1482,9 +1075,9 @@ def envelope_to_mesh(
             )
 
             #
-            # final solid =
+            # Final solid:
             #
-            # PCB ∩ outside-hole
+            #     PCB ∩ outside-hole
             #
 
             phi = np.minimum(
@@ -1494,13 +1087,118 @@ def envelope_to_mesh(
 
     #
     # ========================================================
-    # MARCHING / SUBPIXEL HELPERS
+    # MESH DATA
     # ========================================================
 
     vertices = []
     faces = []
 
     vertex_cache = {}
+
+    #
+    # ========================================================
+    # HEIGHT SAMPLING
+    # ========================================================
+
+    def sample_height(
+        data: np.ndarray,
+        gx: float,
+        gy: float,
+    ) -> float:
+
+        gx = float(
+            np.clip(
+                gx,
+                0.0,
+                w - 1.0,
+            )
+        )
+
+        gy = float(
+            np.clip(
+                gy,
+                0.0,
+                h - 1.0,
+            )
+        )
+
+        x0 = int(
+            np.floor(
+                gx
+            )
+        )
+
+        y0 = int(
+            np.floor(
+                gy
+            )
+        )
+
+        x1 = min(
+            x0 + 1,
+            w - 1,
+        )
+
+        y1 = min(
+            y0 + 1,
+            h - 1,
+        )
+
+        tx = (
+            gx
+            -
+            x0
+        )
+
+        ty = (
+            gy
+            -
+            y0
+        )
+
+        return float(
+            data[
+                y0,
+                x0
+            ]
+            *
+            (1.0 - tx)
+            *
+            (1.0 - ty)
+
+            +
+
+            data[
+                y0,
+                x1
+            ]
+            *
+            tx
+            *
+            (1.0 - ty)
+
+            +
+
+            data[
+                y1,
+                x0
+            ]
+            *
+            (1.0 - tx)
+            *
+            ty
+
+            +
+
+            data[
+                y1,
+                x1
+            ]
+            *
+            tx
+            *
+            ty
+        )
 
     def get_vertex(
         gx: float,
@@ -1525,16 +1223,12 @@ def envelope_to_mesh(
                 key
             ]
 
-        #
-        # gx/gy su FINE grid coordinates.
-        #
-
         x = (
             envelope.min_x
             +
             gx
             *
-            mesh_resolution
+            resolution
         )
 
         y = (
@@ -1542,65 +1236,7 @@ def envelope_to_mesh(
             +
             gy
             *
-            mesh_resolution
-        )
-
-        #
-        # Bilinear Z interpolation unutar FINE height grid-a.
-        #
-
-        x0 = int(
-            np.floor(
-                gx
-            )
-        )
-
-        y0 = int(
-            np.floor(
-                gy
-            )
-        )
-
-        x0 = max(
-            0,
-            min(
-                fine_w - 1,
-                x0,
-            ),
-        )
-
-        y0 = max(
-            0,
-            min(
-                fine_h - 1,
-                y0,
-            ),
-        )
-
-        x1 = min(
-            x0 + 1,
-            fine_w - 1,
-        )
-
-        y1 = min(
-            y0 + 1,
-            fine_h - 1,
-        )
-
-        tx = float(
-            np.clip(
-                gx - x0,
-                0.0,
-                1.0,
-            )
-        )
-
-        ty = float(
-            np.clip(
-                gy - y0,
-                0.0,
-                1.0,
-            )
+            resolution
         )
 
         data = (
@@ -1609,36 +1245,10 @@ def envelope_to_mesh(
             else bottom
         )
 
-        z = float(
-            data[y0, x0]
-            *
-            (1.0 - tx)
-            *
-            (1.0 - ty)
-
-            +
-
-            data[y0, x1]
-            *
-            tx
-            *
-            (1.0 - ty)
-
-            +
-
-            data[y1, x0]
-            *
-            (1.0 - tx)
-            *
-            ty
-
-            +
-
-            data[y1, x1]
-            *
-            tx
-            *
-            ty
+        z = sample_height(
+            data,
+            gx,
+            gy,
         )
 
         index = len(
@@ -1658,6 +1268,11 @@ def envelope_to_mesh(
         ] = index
 
         return index
+
+    #
+    # ========================================================
+    # ZERO CROSSING
+    # ========================================================
 
     def zero_cross(
         p0,
@@ -1716,6 +1331,11 @@ def envelope_to_mesh(
             t,
         )
 
+    #
+    # ========================================================
+    # CELL CLIPPING
+    # ========================================================
+
     def clip_positive(
         points,
         values,
@@ -1732,8 +1352,13 @@ def envelope_to_mesh(
             count
         ):
 
-            current_p = points[i]
-            current_v = values[i]
+            current_p = points[
+                i
+            ]
+
+            current_v = values[
+                i
+            ]
 
             previous_p = points[
                 i - 1
@@ -1802,7 +1427,7 @@ def envelope_to_mesh(
 
     #
     # ========================================================
-    # MESH CELLS
+    # BOUNDARY EDGE CACHE
     # ========================================================
 
     boundary_edges = {}
@@ -1846,30 +1471,51 @@ def envelope_to_mesh(
     active_cells = 0
     boundary_cells = 0
 
+    #
+    # ========================================================
+    # GRID CELLS
+    # ========================================================
+
     for y in range(
-        fine_h - 1
+        h - 1
     ):
 
         for x in range(
-            fine_w - 1
+            w - 1
         ):
 
             points = [
                 (
-                    float(x),
-                    float(y),
+                    float(
+                        x
+                    ),
+                    float(
+                        y
+                    ),
                 ),
                 (
-                    float(x + 1),
-                    float(y),
+                    float(
+                        x + 1
+                    ),
+                    float(
+                        y
+                    ),
                 ),
                 (
-                    float(x + 1),
-                    float(y + 1),
+                    float(
+                        x + 1
+                    ),
+                    float(
+                        y + 1
+                    ),
                 ),
                 (
-                    float(x),
-                    float(y + 1),
+                    float(
+                        x
+                    ),
+                    float(
+                        y + 1
+                    ),
                 ),
             ]
 
@@ -1904,7 +1550,7 @@ def envelope_to_mesh(
             ]
 
             #
-            # Potpuno outside.
+            # Cela ćelija je van solid-a.
             #
 
             if max(
@@ -1927,9 +1573,7 @@ def envelope_to_mesh(
             active_cells += 1
 
             if not all(
-                value
-                >
-                0.0
+                value > 0.0
                 for value in values
             ):
 
@@ -1941,8 +1585,7 @@ def envelope_to_mesh(
                     point[1],
                     0,
                 )
-                for point
-                in polygon
+                for point in polygon
             ]
 
             bottom_indices = [
@@ -1951,12 +1594,11 @@ def envelope_to_mesh(
                     point[1],
                     1,
                 )
-                for point
-                in polygon
+                for point in polygon
             ]
 
             #
-            # Convex polygon → fan triangulation.
+            # Clipped cell polygon je konveksan.
             #
 
             for i in range(
@@ -1972,20 +1614,25 @@ def envelope_to_mesh(
                     [
                         top_indices[0],
                         top_indices[i],
-                        top_indices[i + 1],
+                        top_indices[
+                            i + 1
+                        ],
                     ]
                 )
 
                 faces.append(
                     [
                         bottom_indices[0],
-                        bottom_indices[i + 1],
+                        bottom_indices[
+                            i + 1
+                        ],
                         bottom_indices[i],
                     ]
                 )
 
             #
-            # phi=0 edge je boundary wall.
+            # Segment sa oba endpoint-a na phi=0
+            # pripada finalnoj granici.
             #
 
             count = len(
@@ -2029,7 +1676,7 @@ def envelope_to_mesh(
 
     #
     # ========================================================
-    # WALLS
+    # VERTICAL WALLS
     # ========================================================
 
     for a, b in boundary_edges.values():
@@ -2101,10 +1748,8 @@ def envelope_to_mesh(
     mesh.remove_unreferenced_vertices()
 
     print(
-        "[mesh] supersampled | "
-        f"ray={coarse_resolution:.4f} mm | "
-        f"mesh={mesh_resolution:.4f} mm | "
-        f"quality={boundary_quality}x | "
+        "[mesh] "
+        f"resolution={resolution:.4f} mm | "
         f"cells={active_cells:,} | "
         f"boundary={boundary_cells:,} | "
         f"{len(mesh.vertices):,} vertices | "

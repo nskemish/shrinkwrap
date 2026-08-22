@@ -33,7 +33,6 @@ from core.envelope import (
 )
 
 from core.drill import (
-    deduplicate_holes,
     drill_center,
     filter_drills,
     load_excellon,
@@ -65,7 +64,6 @@ class MainWindow(QMainWindow):
 
         self.generated_mesh = None
 
-        self.pth_path = None
         self.npth_path = None
 
         self._build_ui()
@@ -263,38 +261,6 @@ class MainWindow(QMainWindow):
             drill_group
         )
 
-        self.pth_checkbox = QCheckBox(
-            "Use PTH"
-        )
-
-        self.pth_checkbox.setChecked(
-            False
-        )
-
-        self.pth_label = QLabel(
-            "PTH: not loaded"
-        )
-
-        self.pth_label.setWordWrap(
-            True
-        )
-
-        pth_button = QPushButton(
-            "Load PTH.drl..."
-        )
-
-        pth_button.clicked.connect(
-            self.open_pth
-        )
-
-        self.npth_checkbox = QCheckBox(
-            "Use NPTH"
-        )
-
-        self.npth_checkbox.setChecked(
-            True
-        )
-
         self.npth_label = QLabel(
             "NPTH: not loaded"
         )
@@ -309,26 +275,6 @@ class MainWindow(QMainWindow):
 
         npth_button.clicked.connect(
             self.open_npth
-        )
-
-        drill_layout.addWidget(
-            self.pth_checkbox
-        )
-
-        drill_layout.addWidget(
-            self.pth_label
-        )
-
-        drill_layout.addWidget(
-            pth_button
-        )
-
-        drill_layout.addSpacing(
-            6
-        )
-
-        drill_layout.addWidget(
-            self.npth_checkbox
         )
 
         drill_layout.addWidget(
@@ -633,35 +579,6 @@ class MainWindow(QMainWindow):
             self.smoothing_spin,
         )
 
-        self.pcb_edge_guard_spin = (
-            QDoubleSpinBox()
-        )
-
-        self.pcb_edge_guard_spin.setRange(
-            0.0,
-            10.0,
-        )
-
-        self.pcb_edge_guard_spin.setDecimals(
-            2
-        )
-
-        self.pcb_edge_guard_spin.setValue(
-            1.50
-        )
-
-        self.pcb_edge_guard_spin.setSingleStep(
-            0.25
-        )
-
-        self.pcb_edge_guard_spin.setSuffix(
-            " mm"
-        )
-
-        form.addRow(
-            "PCB edge guard",
-            self.pcb_edge_guard_spin,
-        )
 
         form.addRow(
             "Clearance",
@@ -840,42 +757,6 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def open_pth(self):
-
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open PTH drill file",
-            "",
-            "Excellon Drill (*.drl *.xln *.txt);;All files (*)",
-        )
-
-        if not path:
-            return
-
-        try:
-
-            holes = load_excellon(
-                path,
-                plated=True,
-            )
-
-        except Exception as exc:
-
-            self.statusBar().showMessage(
-                f"PTH error: {exc}"
-            )
-
-            raise
-
-        self.pth_path = path
-
-        self.pth_label.setText(
-            (
-                f"PTH: {Path(path).name}\n"
-                f"{len(holes)} drill positions"
-            )
-        )
-
     def open_npth(self):
 
         path, _ = QFileDialog.getOpenFileName(
@@ -930,10 +811,6 @@ class MainWindow(QMainWindow):
         holes = load_excellon(
             self.npth_path,
             plated=False,
-        )
-
-        holes = deduplicate_holes(
-            holes
         )
 
         #

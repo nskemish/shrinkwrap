@@ -21,11 +21,6 @@ class HeightMap:
     raw_bottom: np.ndarray
 
     #
-    # True tamo gde vertikalni XY zrak pogađa model.
-    #
-    hit_mask: np.ndarray
-
-    #
     # Detektovan rigidni PCB footprint.
     #
     pcb_mask: np.ndarray
@@ -43,42 +38,6 @@ class HeightMap:
     pcb_top_z: float
     pcb_bottom_z: float
     pcb_thickness: float
-
-    #
-    # Originalni model bounds, bez analysis padding-a.
-    #
-    model_min_x: float
-    model_min_y: float
-    model_max_x: float
-    model_max_y: float
-
-    @property
-    def width(self) -> int:
-        return self.raw_top.shape[1]
-
-    @property
-    def height(self) -> int:
-        return self.raw_top.shape[0]
-
-    @property
-    def max_x(self) -> float:
-        return (
-            self.min_x
-            +
-            (self.width - 1)
-            *
-            self.resolution
-        )
-
-    @property
-    def max_y(self) -> float:
-        return (
-            self.min_y
-            +
-            (self.height - 1)
-            *
-            self.resolution
-        )
 
 
 # ============================================================
@@ -511,35 +470,6 @@ def generate_heightmap(
         enclosed_voids
     )
 
-    #
-    # DEBUG MASKS
-    #
-    _debug_save_mask(
-        "hit_mask",
-        hit_mask,
-    )
-
-    _debug_save_mask(
-        "pcb_candidate",
-        pcb_column_candidate,
-    )
-
-    _debug_save_mask(
-        "pcb_connected",
-        pcb_connected,
-    )
-
-    _debug_save_mask(
-        "outside_air",
-        outside_air,
-    )
-
-    _debug_save_mask(
-        "enclosed_voids",
-        enclosed_voids,
-    )
-
-
     print(
         "[heightmap] topology | "
         f"solid={np.count_nonzero(pcb_connected):,} | "
@@ -567,11 +497,6 @@ def generate_heightmap(
         dtype=bool,
     )
 
-    _debug_save_mask(
-        "pcb_mask",
-        pcb_mask,
-    )
-
     print(
         "[heightmap] "
         f"PCB thickness={pcb_thickness:.3f} mm | "
@@ -583,8 +508,6 @@ def generate_heightmap(
     return HeightMap(
         raw_top=raw_top,
         raw_bottom=raw_bottom,
-
-        hit_mask=hit_mask,
 
         pcb_mask=pcb_mask,
 
@@ -612,10 +535,6 @@ def generate_heightmap(
             pcb_thickness
         ),
 
-        model_min_x=model_min_x,
-        model_min_y=model_min_y,
-        model_max_x=model_max_x,
-        model_max_y=model_max_y,
     )
 
 
@@ -805,37 +724,6 @@ def _detect_pcb_thickness(
         peak,
         tolerance,
     )
-
-
-def _debug_save_mask(
-    name: str,
-    mask: np.ndarray,
-):
-    """
-    Debug-only PNG dump binarne maske.
-    """
-
-    try:
-        from PIL import Image
-
-        image = (
-            np.asarray(
-                mask,
-                dtype=np.uint8,
-            )
-            * 255
-        )
-
-        Image.fromarray(
-            image
-        ).save(
-            f"debug_{name}.png"
-        )
-
-    except Exception as exc:
-        print(
-            f"[debug] could not save {name}: {exc}"
-        )
 
 
 def _largest_component(

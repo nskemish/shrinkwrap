@@ -252,7 +252,6 @@ class Viewport(
         )
 
         self.mesh = None
-        self.wrap_mesh = None
 
         self.shader_program = 0
 
@@ -295,16 +294,6 @@ class Viewport(
         glEnable(
             GL_MULTISAMPLE
         )
-
-        # TEMP DEBUG:
-        # Disable back-face culling to verify wall winding.
-        # glEnable(
-        #     GL_CULL_FACE
-        # )
-
-        # glCullFace(
-        #     GL_BACK
-        # )
 
         glClearColor(
             0.045,
@@ -985,7 +974,6 @@ class Viewport(
         self,
         mesh,
     ):
-        self.wrap_mesh = mesh
 
         self.makeCurrent()
 

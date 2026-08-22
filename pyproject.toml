@@ -2,7 +2,7 @@
 name = "shrinkwrap"
 version = "0.1.0"
 description = "PCB shrink-wrap height envelope generator"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 
 dependencies = [
     "numpy>=2.0",
@@ -10,9 +10,7 @@ dependencies = [
     "pyopengl>=3.1.7",
     "trimesh>=4.4",
     "scipy>=1.18.0",
-    "networkx>=3.6.1",
-    "manifold3d>=3.5.2",
-    "pillow>=12.3.0",
+    "pyopengl-accelerate>=3.1.10",
 ]
 
 [project.scripts]

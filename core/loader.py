@@ -49,10 +49,6 @@ def load_mesh(path: str | Path) -> trimesh.Trimesh:
 
     mesh.remove_unreferenced_vertices()
 
-    # Izbegava probleme sa nekim STL fajlovima.
-    if len(mesh.vertex_normals) != len(mesh.vertices):
-        mesh.fix_normals()
-
     return mesh
 
 
