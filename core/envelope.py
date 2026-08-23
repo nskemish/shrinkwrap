@@ -3,6 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+try:
+    from core import _native
+except ImportError:
+    _native = None
+
 import trimesh
 from scipy import ndimage
 
@@ -564,6 +570,39 @@ def _propagate_relief(
     pcb_mask: np.ndarray,
     drop_per_pixel: float,
 ) -> np.ndarray:
+    """Native C++ relief propagation with Python fallback."""
+
+    if _native is None:
+        return _propagate_relief_python(
+            relief=relief,
+            pcb_mask=pcb_mask,
+            drop_per_pixel=drop_per_pixel,
+        )
+
+    result = np.ascontiguousarray(
+        relief,
+        dtype=np.float32,
+    ).copy()
+
+    mask = np.ascontiguousarray(
+        pcb_mask,
+        dtype=np.bool_,
+    )
+
+    _native.propagate_relief(
+        result,
+        mask,
+        float(drop_per_pixel),
+    )
+
+    return result
+
+
+def _propagate_relief_python(
+    relief: np.ndarray,
+    pcb_mask: np.ndarray,
+    drop_per_pixel: float,
+) -> np.ndarray:
     """
     Slope propagation SAMO unutar PCB footprint-a.
 
@@ -906,7 +945,182 @@ def _make_hole_keepout_weight(
 # ============================================================
 
 
+
 def envelope_to_mesh(
+    envelope: Envelope,
+) -> trimesh.Trimesh:
+    """
+    Native C++ mesher.
+
+    Signed-distance PCB/NPTH polje i dalje se računa
+    u Python/SciPy sloju. C++ radi samo clipping,
+    triangulation, vertex cache i boundary walls.
+    """
+
+    if _native is None:
+        return _envelope_to_mesh_python(
+            envelope
+        )
+
+    top = np.ascontiguousarray(
+        envelope.top,
+        dtype=np.float64,
+    )
+
+    bottom = np.ascontiguousarray(
+        envelope.bottom,
+        dtype=np.float64,
+    )
+
+    pcb_mask = np.asarray(
+        envelope.pcb_mask,
+        dtype=bool,
+    )
+
+    if (
+        top.shape != bottom.shape
+        or
+        top.shape != pcb_mask.shape
+    ):
+        raise ValueError(
+            "Envelope arrays have incompatible shapes."
+        )
+
+    h, w = pcb_mask.shape
+
+    resolution = float(
+        envelope.resolution
+    )
+
+    # ========================================================
+    # PCB SIGNED DISTANCE
+    # ========================================================
+
+    inside_distance = (
+        ndimage.distance_transform_edt(
+            pcb_mask
+        )
+        *
+        resolution
+    )
+
+    outside_distance = (
+        ndimage.distance_transform_edt(
+            ~pcb_mask
+        )
+        *
+        resolution
+    )
+
+    phi = (
+        inside_distance
+        -
+        outside_distance
+    ).astype(
+        np.float64
+    )
+
+    # ========================================================
+    # EXACT NPTH
+    # ========================================================
+
+    if envelope.holes:
+
+        xs = (
+            envelope.min_x
+            +
+            np.arange(
+                w,
+                dtype=np.float64,
+            )
+            *
+            resolution
+        )
+
+        ys = (
+            envelope.min_y
+            +
+            np.arange(
+                h,
+                dtype=np.float64,
+            )
+            *
+            resolution
+        )
+
+        xx = xs[None, :]
+        yy = ys[:, None]
+
+        for hole in envelope.holes:
+
+            radius = (
+                float(hole.diameter)
+                *
+                0.5
+            )
+
+            hole_phi = (
+                np.sqrt(
+                    (
+                        xx
+                        -
+                        float(hole.x)
+                    )
+                    ** 2
+                    +
+                    (
+                        yy
+                        -
+                        float(hole.y)
+                    )
+                    ** 2
+                )
+                -
+                radius
+            )
+
+            phi = np.minimum(
+                phi,
+                hole_phi,
+            )
+
+    phi = np.ascontiguousarray(
+        phi,
+        dtype=np.float64,
+    )
+
+    vertices, faces, active_cells, boundary_cells = (
+        _native.envelope_to_mesh(
+            top,
+            bottom,
+            phi,
+            float(envelope.min_x),
+            float(envelope.min_y),
+            resolution,
+        )
+    )
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=faces,
+        process=False,
+    )
+
+    mesh.remove_unreferenced_vertices()
+
+    print(
+        "[mesh/native] "
+        f"resolution={resolution:.4f} mm | "
+        f"cells={active_cells:,} | "
+        f"boundary={boundary_cells:,} | "
+        f"{len(mesh.vertices):,} vertices | "
+        f"{len(mesh.faces):,} triangles"
+    )
+
+    return mesh
+
+
+def _envelope_to_mesh_python(
     envelope: Envelope,
 ) -> trimesh.Trimesh:
     """

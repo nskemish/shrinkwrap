@@ -781,7 +781,7 @@ class MainWindow(QMainWindow):
         )
 
         self.resolution_spin.setRange(
-            0.05,
+            0.01,
             5.0,
         )
 
@@ -790,7 +790,7 @@ class MainWindow(QMainWindow):
         )
 
         self.resolution_spin.setSingleStep(
-            0.05
+            0.01
         )
 
         self.resolution_spin.setSuffix(

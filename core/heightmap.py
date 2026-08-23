@@ -6,6 +6,11 @@ import numpy as np
 import trimesh
 from scipy import ndimage
 
+try:
+    from core import _native
+except ImportError:
+    _native = None
+
 
 # ============================================================
 # DATA
@@ -773,6 +778,75 @@ def _largest_component(
 
 
 def _project_mesh(
+    mesh: trimesh.Trimesh,
+    top: np.ndarray,
+    bottom: np.ndarray,
+    min_x: float,
+    min_y: float,
+    resolution: float,
+):
+    """
+    Native C++ projection.
+
+    Dok razvijamo native backend, Python implementacija
+    ostaje dostupna kao _project_mesh_python().
+    """
+
+    if _native is None:
+        print(
+            "[heightmap] native rasterizer unavailable; "
+            "using Python fallback"
+        )
+
+        return _project_mesh_python(
+            mesh=mesh,
+            top=top,
+            bottom=bottom,
+            min_x=min_x,
+            min_y=min_y,
+            resolution=resolution,
+        )
+
+    vertices = np.ascontiguousarray(
+        mesh.vertices,
+        dtype=np.float64,
+    )
+
+    faces = np.ascontiguousarray(
+        mesh.faces,
+        dtype=np.int64,
+    )
+
+    if (
+        top.dtype != np.float32
+        or
+        not top.flags.c_contiguous
+    ):
+        raise ValueError(
+            "top must be C-contiguous float32."
+        )
+
+    if (
+        bottom.dtype != np.float32
+        or
+        not bottom.flags.c_contiguous
+    ):
+        raise ValueError(
+            "bottom must be C-contiguous float32."
+        )
+
+    _native.project_mesh(
+        vertices,
+        faces,
+        top,
+        bottom,
+        float(min_x),
+        float(min_y),
+        float(resolution),
+    )
+
+
+def _project_mesh_python(
     mesh: trimesh.Trimesh,
     top: np.ndarray,
     bottom: np.ndarray,
