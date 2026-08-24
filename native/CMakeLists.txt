@@ -5,6 +5,7 @@ pybind11_add_module(
     bindings.cpp
     rasterizer.cpp
     relief.cpp
+    regularizer.cpp
     mesher.cpp
     adaptive_mesher.cpp
     qem_simplifier.cpp

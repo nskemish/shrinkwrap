@@ -1,5 +1,6 @@
 #include "rasterizer.hpp"
 #include "relief.hpp"
+#include "regularizer.hpp"
 #include "mesher.hpp"
 #include "adaptive_mesher.hpp"
 #include "qem_simplifier.hpp"
@@ -549,6 +550,96 @@ py::tuple simplify_qem_binding(
 }
 
 
+
+void regularize_steep_surface_binding(
+    py::array_t<
+        float,
+        py::array::c_style
+    > surface,
+
+    py::array_t<
+        float,
+        py::array::c_style
+    > original,
+
+    py::array_t<
+        bool,
+        py::array::c_style
+    > pcb_mask,
+
+    const double resolution,
+    const double angle_threshold_deg,
+    const double correction_tolerance_mm,
+
+    const int radius,
+    const int iterations
+) {
+    if (
+        surface.ndim() != 2
+        ||
+        original.ndim() != 2
+        ||
+        pcb_mask.ndim() != 2
+    ) {
+        throw std::invalid_argument(
+            "surface, original and pcb_mask must be 2D."
+        );
+    }
+
+    if (
+        surface.shape(0) != original.shape(0)
+        ||
+        surface.shape(1) != original.shape(1)
+        ||
+        surface.shape(0) != pcb_mask.shape(0)
+        ||
+        surface.shape(1) != pcb_mask.shape(1)
+    ) {
+        throw std::invalid_argument(
+            "surface, original and pcb_mask shapes must match."
+        );
+    }
+
+    if (!surface.writeable()) {
+        throw std::invalid_argument(
+            "surface must be writable."
+        );
+    }
+
+    const auto height =
+        static_cast<std::size_t>(
+            surface.shape(0)
+        );
+
+    const auto width =
+        static_cast<std::size_t>(
+            surface.shape(1)
+        );
+
+    py::gil_scoped_release release;
+
+    shrinkwrap::regularize_steep_surface(
+        surface.mutable_data(),
+
+        original.data(),
+
+        reinterpret_cast<const std::uint8_t*>(
+            pcb_mask.data()
+        ),
+
+        width,
+        height,
+
+        resolution,
+        angle_threshold_deg,
+        correction_tolerance_mm,
+
+        radius,
+        iterations
+    );
+}
+
+
 PYBIND11_MODULE(
     _native,
     module
@@ -641,6 +732,25 @@ relief is modified in-place.
         py::arg("preserve_normals") = true,
 
         "Simplify using Garland-Heckbert QEM within a physical geometric tolerance."
+    );
+
+
+    module.def(
+        "regularize_steep_surface",
+        &regularize_steep_surface_binding,
+
+        py::arg("surface"),
+        py::arg("original"),
+        py::arg("pcb_mask"),
+
+        py::arg("resolution"),
+        py::arg("angle_threshold_deg") = 70.0,
+        py::arg("correction_tolerance_mm") = 0.02,
+
+        py::arg("radius") = 3,
+        py::arg("iterations") = 2,
+
+        "Planar regularization of steep free-cloth regions."
     );
 
 }

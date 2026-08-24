@@ -474,6 +474,90 @@ def _build_relief_cloth(
     )
 
     # --------------------------------------------------------
+    # STEEP-SURFACE REGULARIZATION
+    # --------------------------------------------------------
+    #
+    # Very steep raster-generated cloth ramps can contain
+    # tiny staircase/faceting artifacts. They are not real
+    # component geometry, so locally approximate planar
+    # regions are regularized before meshing.
+    #
+    # Pixels occupied by the original component relief are
+    # locked and never modified.
+    #
+
+    if (
+        _native is not None
+        and
+        hasattr(
+            _native,
+            "regularize_steep_surface",
+        )
+        and
+        slope_degrees >= 70.0
+    ):
+        result = np.ascontiguousarray(
+            result,
+            dtype=np.float32,
+        )
+
+        original_native = np.ascontiguousarray(
+            original,
+            dtype=np.float32,
+        )
+
+        mask_native = np.ascontiguousarray(
+            pcb_mask,
+            dtype=np.bool_,
+        )
+
+        regularizer_radius = int(
+            np.clip(
+                round(
+                    0.30
+                    /
+                    resolution
+                ),
+                2,
+                12,
+            )
+        )
+
+        regularizer_tolerance = max(
+            0.010,
+            min(
+                0.030,
+                resolution * 0.25,
+            ),
+        )
+
+        _native.regularize_steep_surface(
+            result,
+            original_native,
+            mask_native,
+
+            float(resolution),
+
+            70.0,
+            float(
+                regularizer_tolerance
+            ),
+
+            regularizer_radius,
+            2,
+        )
+
+        #
+        # Hard safety constraint:
+        # never pass through original geometry.
+        #
+        np.maximum(
+            result,
+            original,
+            out=result,
+        )
+
+    # --------------------------------------------------------
     # SMOOTHING
     # --------------------------------------------------------
 
