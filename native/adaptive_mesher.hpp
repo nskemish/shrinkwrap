@@ -6,15 +6,16 @@
 
 namespace shrinkwrap {
 
-struct MeshResult {
+struct AdaptiveMeshResult {
     std::vector<float> vertices;
     std::vector<std::int64_t> faces;
 
-    std::size_t active_cells = 0;
+    std::size_t adaptive_patches = 0;
     std::size_t boundary_cells = 0;
+    std::size_t base_cells_saved = 0;
 };
 
-MeshResult envelope_to_mesh(
+AdaptiveMeshResult adaptive_envelope_to_mesh(
     const float* top,
     const float* bottom,
     const float* phi,
@@ -24,7 +25,10 @@ MeshResult envelope_to_mesh(
 
     double min_x,
     double min_y,
-    double resolution
+    double resolution,
+
+    double surface_tolerance,
+    std::size_t max_span_cells
 );
 
 } // namespace shrinkwrap

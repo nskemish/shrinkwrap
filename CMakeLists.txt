@@ -18,6 +18,9 @@ find_package(
     REQUIRED
 )
 
+find_package(CGAL REQUIRED)
+find_package(Eigen3 REQUIRED NO_MODULE)
+
 find_package(
     pybind11
     CONFIG

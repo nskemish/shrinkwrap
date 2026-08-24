@@ -1,6 +1,8 @@
 #include "rasterizer.hpp"
 #include "relief.hpp"
 #include "mesher.hpp"
+#include "adaptive_mesher.hpp"
+#include "qem_simplifier.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -225,17 +227,17 @@ void propagate_relief_binding(
 
 py::tuple envelope_to_mesh_binding(
     py::array_t<
-        double,
+        float,
         py::array::c_style
     > top,
 
     py::array_t<
-        double,
+        float,
         py::array::c_style
     > bottom,
 
     py::array_t<
-        double,
+        float,
         py::array::c_style
     > phi,
 
@@ -331,6 +333,222 @@ py::tuple envelope_to_mesh_binding(
 }
 
 
+
+py::tuple adaptive_envelope_to_mesh_binding(
+    py::array_t<
+        float,
+        py::array::c_style
+    > top,
+
+    py::array_t<
+        float,
+        py::array::c_style
+    > bottom,
+
+    py::array_t<
+        float,
+        py::array::c_style
+    > phi,
+
+    const double min_x,
+    const double min_y,
+    const double resolution,
+    const double surface_tolerance,
+    const std::size_t max_span_cells
+) {
+    if (
+        top.ndim() != 2 ||
+        bottom.ndim() != 2 ||
+        phi.ndim() != 2
+    ) {
+        throw std::invalid_argument(
+            "top, bottom and phi must be 2D."
+        );
+    }
+
+    if (
+        top.shape(0) != bottom.shape(0) ||
+        top.shape(1) != bottom.shape(1) ||
+        top.shape(0) != phi.shape(0) ||
+        top.shape(1) != phi.shape(1)
+    ) {
+        throw std::invalid_argument(
+            "top, bottom and phi shapes must match."
+        );
+    }
+
+    const auto height =
+        static_cast<std::size_t>(
+            top.shape(0)
+        );
+
+    const auto width =
+        static_cast<std::size_t>(
+            top.shape(1)
+        );
+
+    shrinkwrap::AdaptiveMeshResult result;
+
+    {
+        py::gil_scoped_release release;
+
+        result =
+            shrinkwrap::adaptive_envelope_to_mesh(
+                top.data(),
+                bottom.data(),
+                phi.data(),
+
+                width,
+                height,
+
+                min_x,
+                min_y,
+                resolution,
+
+                surface_tolerance,
+                max_span_cells
+            );
+    }
+
+    const std::size_t vertex_count =
+        result.vertices.size() / 3;
+
+    const std::size_t face_count =
+        result.faces.size() / 3;
+
+    py::array_t<float> vertices({
+        static_cast<py::ssize_t>(
+            vertex_count
+        ),
+        static_cast<py::ssize_t>(3)
+    });
+
+    py::array_t<std::int64_t> faces({
+        static_cast<py::ssize_t>(
+            face_count
+        ),
+        static_cast<py::ssize_t>(3)
+    });
+
+    std::copy(
+        result.vertices.begin(),
+        result.vertices.end(),
+        vertices.mutable_data()
+    );
+
+    std::copy(
+        result.faces.begin(),
+        result.faces.end(),
+        faces.mutable_data()
+    );
+
+    return py::make_tuple(
+        vertices,
+        faces,
+        result.adaptive_patches,
+        result.boundary_cells,
+        result.base_cells_saved
+    );
+}
+
+
+
+py::tuple simplify_qem_binding(
+    py::array_t<
+        float,
+        py::array::c_style
+    > vertices,
+
+    py::array_t<
+        std::int64_t,
+        py::array::c_style
+    > faces,
+
+    const double target_ratio,
+    const bool preserve_normals
+) {
+    if (
+        vertices.ndim() != 2
+        ||
+        vertices.shape(1) != 3
+    ) {
+        throw std::invalid_argument(
+            "vertices must have shape (N, 3)."
+        );
+    }
+
+    if (
+        faces.ndim() != 2
+        ||
+        faces.shape(1) != 3
+    ) {
+        throw std::invalid_argument(
+            "faces must have shape (M, 3)."
+        );
+    }
+
+    shrinkwrap::QEMSimplifyResult result;
+
+    {
+        py::gil_scoped_release release;
+
+        result =
+            shrinkwrap::simplify_qem(
+                vertices.data(),
+                static_cast<std::size_t>(
+                    vertices.shape(0)
+                ),
+
+                faces.data(),
+                static_cast<std::size_t>(
+                    faces.shape(0)
+                ),
+
+                target_ratio,
+                preserve_normals
+            );
+    }
+
+    py::array_t<float> out_vertices({
+        static_cast<py::ssize_t>(
+            result.vertices.size()
+            /
+            3
+        ),
+        static_cast<py::ssize_t>(3)
+    });
+
+    py::array_t<std::int64_t> out_faces({
+        static_cast<py::ssize_t>(
+            result.faces.size()
+            /
+            3
+        ),
+        static_cast<py::ssize_t>(3)
+    });
+
+    std::copy(
+        result.vertices.begin(),
+        result.vertices.end(),
+        out_vertices.mutable_data()
+    );
+
+    std::copy(
+        result.faces.begin(),
+        result.faces.end(),
+        out_faces.mutable_data()
+    );
+
+    return py::make_tuple(
+        out_vertices,
+        out_faces,
+        result.input_faces,
+        result.output_faces,
+        result.collapsed_edges
+    );
+}
+
+
 PYBIND11_MODULE(
     _native,
     module
@@ -391,6 +609,38 @@ relief is modified in-place.
         py::arg("resolution"),
 
         "Generate envelope mesh using native C++ mesher."
+    );
+
+
+    module.def(
+        "adaptive_envelope_to_mesh",
+        &adaptive_envelope_to_mesh_binding,
+
+        py::arg("top"),
+        py::arg("bottom"),
+        py::arg("phi"),
+
+        py::arg("min_x"),
+        py::arg("min_y"),
+        py::arg("resolution"),
+
+        py::arg("surface_tolerance") = 0.01,
+        py::arg("max_span_cells") = 128,
+
+        "Generate an adaptive conforming envelope mesh."
+    );
+
+
+    module.def(
+        "simplify_qem",
+        &simplify_qem_binding,
+
+        py::arg("vertices"),
+        py::arg("faces"),
+        py::arg("target_ratio") = 0.25,
+        py::arg("preserve_normals") = true,
+
+        "Simplify using Garland-Heckbert QEM within a physical geometric tolerance."
     );
 
 }

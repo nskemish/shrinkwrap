@@ -800,29 +800,15 @@ def _mask_boundary(
 
 def _make_hole_keepout_weight(
     heightmap: HeightMap,
-    holes: list[DrillHole],
+    holes,
     keepout_mm: float,
     feather_mm: float,
 ) -> np.ndarray:
     """
-    Analitički, sub-pixel NPTH keepout.
+    RAM-efficient analytic hole keepout.
 
-    Za svaku rupu:
-
-        inner_radius =
-            hole_radius + keepout_mm
-
-    Unutar inner_radius:
-        cloth = 0
-
-    U feather pojasu:
-        smoothstep 0 -> 1
-
-    Van njega:
-        cloth ostaje netaknut.
-
-    Ovo ne rasterizuje krug kao bool masku, pa keepout
-    više nema oštar pixel-step prelaz.
+    Each hole is evaluated only inside its local bounding box
+    instead of constructing a full-grid distance map.
     """
 
     h, w = heightmap.raw_top.shape
@@ -835,30 +821,17 @@ def _make_hole_keepout_weight(
     if not holes:
         return result
 
-    xs = (
+    resolution = float(
+        heightmap.resolution
+    )
+
+    min_x = float(
         heightmap.min_x
-        +
-        np.arange(
-            w,
-            dtype=np.float64,
-        )
-        *
-        heightmap.resolution
     )
 
-    ys = (
+    min_y = float(
         heightmap.min_y
-        +
-        np.arange(
-            h,
-            dtype=np.float64,
-        )
-        *
-        heightmap.resolution
     )
-
-    xx = xs[None, :]
-    yy = ys[:, None]
 
     feather_mm = max(
         1e-6,
@@ -866,6 +839,9 @@ def _make_hole_keepout_weight(
     )
 
     for hole in holes:
+
+        hx = float(hole.x)
+        hy = float(hole.y)
 
         radius = (
             float(hole.diameter)
@@ -879,46 +855,162 @@ def _make_hole_keepout_weight(
             float(keepout_mm)
         )
 
-        distance = np.sqrt(
-            (
-                xx
-                -
-                float(hole.x)
-            )
-            ** 2
+        outer_radius = (
+            inner_radius
             +
-            (
-                yy
-                -
-                float(hole.y)
-            )
-            ** 2
+            feather_mm
         )
 
-        #
-        # t:
-        #
-        # <= 0     unutra
-        # 0..1     feather
-        # >= 1     puni cloth
-        #
+        extent = (
+            outer_radius
+            +
+            resolution
+        )
+
+        x0 = max(
+            0,
+            int(
+                np.floor(
+                    (
+                        hx
+                        -
+                        extent
+                        -
+                        min_x
+                    )
+                    /
+                    resolution
+                )
+            ),
+        )
+
+        x1 = min(
+            w,
+            int(
+                np.ceil(
+                    (
+                        hx
+                        +
+                        extent
+                        -
+                        min_x
+                    )
+                    /
+                    resolution
+                )
+            )
+            +
+            1,
+        )
+
+        y0 = max(
+            0,
+            int(
+                np.floor(
+                    (
+                        hy
+                        -
+                        extent
+                        -
+                        min_y
+                    )
+                    /
+                    resolution
+                )
+            ),
+        )
+
+        y1 = min(
+            h,
+            int(
+                np.ceil(
+                    (
+                        hy
+                        +
+                        extent
+                        -
+                        min_y
+                    )
+                    /
+                    resolution
+                )
+            )
+            +
+            1,
+        )
+
+        if (
+            x0 >= x1
+            or
+            y0 >= y1
+        ):
+            continue
+
+        xs = (
+            min_x
+            +
+            np.arange(
+                x0,
+                x1,
+                dtype=np.float32,
+            )
+            *
+            resolution
+        )
+
+        ys = (
+            min_y
+            +
+            np.arange(
+                y0,
+                y1,
+                dtype=np.float32,
+            )
+            *
+            resolution
+        )
+
+        dx = (
+            xs[None, :]
+            -
+            np.float32(hx)
+        )
+
+        dy = (
+            ys[:, None]
+            -
+            np.float32(hy)
+        )
+
+        distance = np.sqrt(
+            dx * dx
+            +
+            dy * dy
+        )
+
         t = (
             distance
             -
-            inner_radius
-        ) / feather_mm
+            np.float32(
+                inner_radius
+            )
+        )
 
-        t = np.clip(
+        t /= np.float32(
+            feather_mm
+        )
+
+        np.clip(
             t,
             0.0,
             1.0,
+            out=t,
         )
 
-        #
-        # smoothstep
-        #
         weight = (
-            t * t
+            t
+            *
+            t
             *
             (
                 3.0
@@ -927,34 +1019,407 @@ def _make_hole_keepout_weight(
             )
         )
 
-        #
-        # Ako ima više rupa, najjači keepout pobeđuje.
-        #
-        result = np.minimum(
-            result,
-            weight.astype(
-                np.float32
-            ),
+        view = result[
+            y0:y1,
+            x0:x1
+        ]
+
+        np.minimum(
+            view,
+            weight,
+            out=view,
         )
 
     return result
 
 
-# ============================================================
-# MESH
-# ============================================================
+def _build_mesh_phi(
+    pcb_mask: np.ndarray,
+    holes,
+    min_x: float,
+    min_y: float,
+    resolution: float,
+) -> np.ndarray:
+    """
+    RAM-efficient signed-distance field for the native mesher.
 
+    The final field is float32. SciPy EDT still internally
+    produces float64, but only one full-size EDT array is kept
+    alive at a time.
+
+    Analytic drill-hole distance fields are evaluated only in
+    a local bounding box around each hole.
+    """
+
+    pcb_mask = np.asarray(
+        pcb_mask,
+        dtype=bool,
+    )
+
+    h, w = pcb_mask.shape
+
+    # ========================================================
+    # INSIDE DISTANCE
+    # ========================================================
+
+    distance64 = ndimage.distance_transform_edt(
+        pcb_mask
+    )
+
+    distance64 *= resolution
+
+    phi = distance64.astype(
+        np.float32,
+        copy=True,
+    )
+
+    del distance64
+
+    # ========================================================
+    # OUTSIDE DISTANCE
+    # ========================================================
+
+    distance64 = ndimage.distance_transform_edt(
+        ~pcb_mask
+    )
+
+    distance64 *= resolution
+
+    np.subtract(
+        phi,
+        distance64,
+        out=phi,
+        casting="unsafe",
+    )
+
+    del distance64
+
+    # ========================================================
+    # ANALYTIC HOLES — LOCAL ONLY
+    # ========================================================
+
+    if holes:
+
+        margin = max(
+            resolution * 2.5,
+            0.05,
+        )
+
+        for hole in holes:
+
+            hx = float(hole.x)
+            hy = float(hole.y)
+
+            radius = (
+                float(hole.diameter)
+                *
+                0.5
+            )
+
+            extent = (
+                radius
+                +
+                margin
+            )
+
+            x0 = max(
+                0,
+                int(
+                    np.floor(
+                        (
+                            hx
+                            -
+                            extent
+                            -
+                            min_x
+                        )
+                        /
+                        resolution
+                    )
+                ),
+            )
+
+            x1 = min(
+                w,
+                int(
+                    np.ceil(
+                        (
+                            hx
+                            +
+                            extent
+                            -
+                            min_x
+                        )
+                        /
+                        resolution
+                    )
+                )
+                +
+                1,
+            )
+
+            y0 = max(
+                0,
+                int(
+                    np.floor(
+                        (
+                            hy
+                            -
+                            extent
+                            -
+                            min_y
+                        )
+                        /
+                        resolution
+                    )
+                ),
+            )
+
+            y1 = min(
+                h,
+                int(
+                    np.ceil(
+                        (
+                            hy
+                            +
+                            extent
+                            -
+                            min_y
+                        )
+                        /
+                        resolution
+                    )
+                )
+                +
+                1,
+            )
+
+            if (
+                x0 >= x1
+                or
+                y0 >= y1
+            ):
+                continue
+
+            xs = (
+                min_x
+                +
+                np.arange(
+                    x0,
+                    x1,
+                    dtype=np.float32,
+                )
+                *
+                resolution
+            )
+
+            ys = (
+                min_y
+                +
+                np.arange(
+                    y0,
+                    y1,
+                    dtype=np.float32,
+                )
+                *
+                resolution
+            )
+
+            dx = (
+                xs[None, :]
+                -
+                np.float32(hx)
+            )
+
+            dy = (
+                ys[:, None]
+                -
+                np.float32(hy)
+            )
+
+            hole_phi = np.sqrt(
+                dx * dx
+                +
+                dy * dy
+            )
+
+            hole_phi -= np.float32(
+                radius
+            )
+
+            view = phi[
+                y0:y1,
+                x0:x1
+            ]
+
+            np.minimum(
+                view,
+                hole_phi,
+                out=view,
+            )
+
+    return np.ascontiguousarray(
+        phi,
+        dtype=np.float32,
+    )
+
+
+
+def envelope_to_mesh_adaptive(
+    envelope: Envelope,
+    surface_tolerance: float = 0.01,
+    max_span_cells: int = 128,
+) -> trimesh.Trimesh:
+    """
+    Adaptive native C++ mesher.
+
+    Boundary / NPTH clipping ostaje na originalnom phi=0
+    sistemu. Potpuno unutrašnje oblasti se adaptivno
+    pojednostavljuju prema dozvoljenoj Z grešci.
+    """
+
+    if _native is None:
+        raise RuntimeError(
+            "Native ShrinkWrap backend is unavailable."
+        )
+
+    top = np.ascontiguousarray(
+        envelope.top,
+        dtype=np.float32,
+    )
+
+    bottom = np.ascontiguousarray(
+        envelope.bottom,
+        dtype=np.float32,
+    )
+
+    pcb_mask = np.asarray(
+        envelope.pcb_mask,
+        dtype=bool,
+    )
+
+    resolution = float(
+        envelope.resolution
+    )
+
+    phi = _build_mesh_phi(
+        pcb_mask=pcb_mask,
+        holes=envelope.holes,
+        min_x=float(envelope.min_x),
+        min_y=float(envelope.min_y),
+        resolution=resolution,
+    )
+
+    (
+        vertices,
+        faces,
+        adaptive_patches,
+        boundary_cells,
+        base_cells_saved,
+    ) = _native.adaptive_envelope_to_mesh(
+        top,
+        bottom,
+        phi,
+
+        float(envelope.min_x),
+        float(envelope.min_y),
+        resolution,
+
+        float(surface_tolerance),
+        int(max_span_cells),
+    )
+
+    del phi
+
+    # ========================================================
+    # QEM SIMPLIFICATION
+    # ========================================================
+
+    (
+        qem_vertices,
+        qem_faces,
+        qem_input_faces,
+        qem_output_faces,
+        collapsed_edges,
+    ) = _native.simplify_qem(
+        np.ascontiguousarray(
+            vertices,
+            dtype=np.float32,
+        ),
+        np.ascontiguousarray(
+            faces,
+            dtype=np.int64,
+        ),
+        0.25,
+        False,
+    )
+
+    vertices = qem_vertices
+    faces = qem_faces
+
+    print(
+        "[mesh/qem] "
+        f"{qem_input_faces:,} -> "
+        f"{qem_output_faces:,} triangles | "
+        f"reduction="
+        f"{(1.0 - qem_output_faces / qem_input_faces) * 100.0:.2f}% | "
+        f"collapsed={collapsed_edges:,}"
+    )
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=faces,
+        process=False,
+    )
+
+    print(
+        "[mesh/adaptive] "
+        f"simulation={resolution:.4f} mm | "
+        f"tolerance={surface_tolerance:.4f} mm | "
+        f"patches={adaptive_patches:,} | "
+        f"boundary={boundary_cells:,} | "
+        f"saved-base-cells={base_cells_saved:,} | "
+        f"{len(mesh.vertices):,} vertices | "
+        f"{len(mesh.faces):,} triangles"
+    )
+
+    return mesh
 
 
 def envelope_to_mesh(
     envelope: Envelope,
+    surface_tolerance: float = 0.01,
+    max_span_cells: int = 128,
 ) -> trimesh.Trimesh:
     """
-    Native C++ mesher.
+    Default ShrinkWrap mesher.
 
-    Signed-distance PCB/NPTH polje i dalje se računa
-    u Python/SciPy sloju. C++ radi samo clipping,
-    triangulation, vertex cache i boundary walls.
+    Uses the adaptive native backend to preserve fine surface
+    detail while avoiding unnecessary triangles in flat and
+    slowly-varying regions.
+    """
+
+    if _native is None:
+        return _envelope_to_mesh_python(
+            envelope
+        )
+
+    return envelope_to_mesh_adaptive(
+        envelope=envelope,
+        surface_tolerance=surface_tolerance,
+        max_span_cells=max_span_cells,
+    )
+
+
+def envelope_to_mesh_uniform(
+    envelope: Envelope,
+) -> trimesh.Trimesh:
+    """
+    Uniform native C++ reference mesher.
+
+    Kept primarily for testing, benchmarking and debugging.
+    Normal application use should go through envelope_to_mesh(),
+    which uses the adaptive native backend.
     """
 
     if _native is None:
@@ -964,12 +1429,12 @@ def envelope_to_mesh(
 
     top = np.ascontiguousarray(
         envelope.top,
-        dtype=np.float64,
+        dtype=np.float32,
     )
 
     bottom = np.ascontiguousarray(
         envelope.bottom,
-        dtype=np.float64,
+        dtype=np.float32,
     )
 
     pcb_mask = np.asarray(
@@ -986,107 +1451,16 @@ def envelope_to_mesh(
             "Envelope arrays have incompatible shapes."
         )
 
-    h, w = pcb_mask.shape
-
     resolution = float(
         envelope.resolution
     )
 
-    # ========================================================
-    # PCB SIGNED DISTANCE
-    # ========================================================
-
-    inside_distance = (
-        ndimage.distance_transform_edt(
-            pcb_mask
-        )
-        *
-        resolution
-    )
-
-    outside_distance = (
-        ndimage.distance_transform_edt(
-            ~pcb_mask
-        )
-        *
-        resolution
-    )
-
-    phi = (
-        inside_distance
-        -
-        outside_distance
-    ).astype(
-        np.float64
-    )
-
-    # ========================================================
-    # EXACT NPTH
-    # ========================================================
-
-    if envelope.holes:
-
-        xs = (
-            envelope.min_x
-            +
-            np.arange(
-                w,
-                dtype=np.float64,
-            )
-            *
-            resolution
-        )
-
-        ys = (
-            envelope.min_y
-            +
-            np.arange(
-                h,
-                dtype=np.float64,
-            )
-            *
-            resolution
-        )
-
-        xx = xs[None, :]
-        yy = ys[:, None]
-
-        for hole in envelope.holes:
-
-            radius = (
-                float(hole.diameter)
-                *
-                0.5
-            )
-
-            hole_phi = (
-                np.sqrt(
-                    (
-                        xx
-                        -
-                        float(hole.x)
-                    )
-                    ** 2
-                    +
-                    (
-                        yy
-                        -
-                        float(hole.y)
-                    )
-                    ** 2
-                )
-                -
-                radius
-            )
-
-            phi = np.minimum(
-                phi,
-                hole_phi,
-            )
-
-    phi = np.ascontiguousarray(
-        phi,
-        dtype=np.float64,
+    phi = _build_mesh_phi(
+        pcb_mask=pcb_mask,
+        holes=envelope.holes,
+        min_x=float(envelope.min_x),
+        min_y=float(envelope.min_y),
+        resolution=resolution,
     )
 
     vertices, faces, active_cells, boundary_cells = (
@@ -1099,6 +1473,8 @@ def envelope_to_mesh(
             resolution,
         )
     )
+
+    del phi
 
     mesh = trimesh.Trimesh(
         vertices=vertices,

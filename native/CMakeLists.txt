@@ -6,6 +6,8 @@ pybind11_add_module(
     rasterizer.cpp
     relief.cpp
     mesher.cpp
+    adaptive_mesher.cpp
+    qem_simplifier.cpp
 )
 
 target_include_directories(
@@ -37,4 +39,12 @@ set_target_properties(
 
     LIBRARY_OUTPUT_DIRECTORY
         "${CMAKE_SOURCE_DIR}/core"
+)
+
+
+target_link_libraries(
+    _native
+    PRIVATE
+    CGAL::CGAL
+    Eigen3::Eigen
 )

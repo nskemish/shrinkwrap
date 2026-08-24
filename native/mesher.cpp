@@ -219,8 +219,8 @@ EdgeKey make_edge_key(
 class MeshBuilder {
 public:
     MeshBuilder(
-        const double* top,
-        const double* bottom,
+        const float* top,
+        const float* bottom,
         const std::size_t width,
         const std::size_t height,
         const double min_x,
@@ -263,7 +263,7 @@ public:
             +
             gy * resolution_;
 
-        const double* data =
+        const float* data =
             side == 0
             ? top_
             : bottom_;
@@ -315,7 +315,7 @@ public:
 
 private:
     double sample_height(
-        const double* data,
+        const float* data,
         double gx,
         double gy
     ) const {
@@ -401,8 +401,8 @@ private:
             ty;
     }
 
-    const double* top_;
-    const double* bottom_;
+    const float* top_;
+    const float* bottom_;
 
     std::size_t width_;
     std::size_t height_;
@@ -422,9 +422,9 @@ private:
 
 
 MeshResult envelope_to_mesh(
-    const double* top,
-    const double* bottom,
-    const double* phi,
+    const float* top,
+    const float* bottom,
+    const float* phi,
 
     const std::size_t width,
     const std::size_t height,

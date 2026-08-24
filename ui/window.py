@@ -797,6 +797,36 @@ class MainWindow(QMainWindow):
             " mm"
         )
 
+        self.surface_tolerance_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.surface_tolerance_spin.setDecimals(
+            3
+        )
+
+        self.surface_tolerance_spin.setRange(
+            0.001,
+            0.100,
+        )
+
+        self.surface_tolerance_spin.setValue(
+            0.010
+        )
+
+        self.surface_tolerance_spin.setSingleStep(
+            0.001
+        )
+
+        self.surface_tolerance_spin.setSuffix(
+            " mm"
+        )
+
+        self.surface_tolerance_spin.setToolTip(
+            "Maximum allowed adaptive surface approximation error. "
+            "Lower values preserve more detail but generate more triangles."
+        )
+
         self.bridge_spin = (
             QDoubleSpinBox()
         )
@@ -882,8 +912,13 @@ class MainWindow(QMainWindow):
         )
 
         form.addRow(
-            "Resolution",
+            "Simulation resolution",
             self.resolution_spin,
+        )
+
+        form.addRow(
+            "Surface tolerance",
+            self.surface_tolerance_spin,
         )
 
         form.addRow(
@@ -1347,7 +1382,11 @@ class MainWindow(QMainWindow):
             )
 
             mesh = envelope_to_mesh(
-                envelope
+                envelope,
+                surface_tolerance=(
+                    self.surface_tolerance_spin.value()
+                ),
+                max_span_cells=128,
             )
 
             self.generated_mesh = mesh
