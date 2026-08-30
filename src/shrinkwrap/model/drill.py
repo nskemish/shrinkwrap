@@ -281,22 +281,6 @@ def deduplicate_holes(
     return result
 
 
-def filter_drills(
-    holes: list[DrillHole],
-    min_diameter_mm: float = 0.0,
-) -> list[DrillHole]:
-
-    return [
-        hole
-        for hole in holes
-        if (
-            hole.diameter
-            >=
-            min_diameter_mm
-        )
-    ]
-
-
 def transform_drills(
     holes: list[DrillHole],
     *,
