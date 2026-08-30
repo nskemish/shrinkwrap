@@ -25,31 +25,31 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.loader import (
+from shrinkwrap.io.mesh_loader import (
     MeshLoadError,
     get_mesh_info,
 )
 
-from core.heightmap import (
+from shrinkwrap.model.heightmap import (
     generate_heightmap,
 )
 
-from core.envelope import (
+from shrinkwrap.model.envelope import (
     build_envelope,
     envelope_to_mesh,
 )
 
-from core.drill import (
+from shrinkwrap.model.drill import (
     drill_center,
     load_excellon,
     transform_drills,
 )
 
-from core.export import (
+from shrinkwrap.io.mesh_exporter import (
     export_mesh,
 )
 
-from ui.viewport import Viewport
+from shrinkwrap.ui.viewport import Viewport
 
 
 class ViewportFadeOverlay(QWidget):

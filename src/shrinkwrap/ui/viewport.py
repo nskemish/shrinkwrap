@@ -11,7 +11,7 @@ from OpenGL.GL import *
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
-from core.loader import load_mesh
+from shrinkwrap.io.mesh_loader import load_mesh
 
 
 ROOT_DIR = Path(

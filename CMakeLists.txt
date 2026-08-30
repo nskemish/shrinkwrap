@@ -27,4 +27,4 @@ find_package(
     REQUIRED
 )
 
-add_subdirectory(native)
+add_subdirectory(src/native)

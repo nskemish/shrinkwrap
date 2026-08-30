@@ -7,7 +7,7 @@ import trimesh
 from scipy import ndimage
 
 try:
-    from core import _native
+    from shrinkwrap import _native
 except ImportError:
     _native = None
 

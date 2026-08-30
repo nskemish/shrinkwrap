@@ -3,7 +3,7 @@ import sys
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtWidgets import QApplication
 
-from ui.window import MainWindow
+from shrinkwrap.ui.window import MainWindow
 
 
 def main():

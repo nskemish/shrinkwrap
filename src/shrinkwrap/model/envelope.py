@@ -5,15 +5,15 @@ from dataclasses import dataclass
 import numpy as np
 
 try:
-    from core import _native
+    from shrinkwrap import _native
 except ImportError:
     _native = None
 
 import trimesh
 from scipy import ndimage
 
-from core.drill import DrillHole
-from core.heightmap import HeightMap
+from shrinkwrap.model.drill import DrillHole
+from shrinkwrap.model.heightmap import HeightMap
 
 
 # ============================================================

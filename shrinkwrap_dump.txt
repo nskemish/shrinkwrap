@@ -1,0 +1,7939 @@
+================================================================================
+SHRINKWRAP — PROJECT DUMP
+Generated: Mon Aug 31 00:11:45 CEST 2026
+================================================================================
+
+================================================================================
+PROJECT TREE
+================================================================================
+
+.
+├── .gitignore
+├── CMakeLists.txt
+├── README.md
+├── ShrinkWrap.spec
+├── build_app.sh
+├── core
+│   ├── __init__.py
+│   ├── drill.py
+│   ├── envelope.py
+│   ├── export.py
+│   ├── heightmap.py
+│   └── loader.py
+├── main.py
+├── native
+│   ├── CMakeLists.txt
+│   ├── adaptive_mesher.cpp
+│   ├── adaptive_mesher.hpp
+│   ├── bindings.cpp
+│   ├── mesher.cpp
+│   ├── mesher.hpp
+│   ├── qem_simplifier.cpp
+│   ├── qem_simplifier.hpp
+│   ├── rasterizer.cpp
+│   ├── rasterizer.hpp
+│   ├── regularizer.cpp
+│   ├── regularizer.hpp
+│   ├── relief.cpp
+│   └── relief.hpp
+├── pyproject.toml
+├── shaders
+│   ├── mesh.frag
+│   └── mesh.vert
+├── shrinkwrap_dump.txt
+├── ui
+│   ├── viewport.py
+│   └── window.py
+└── uv.lock
+
+5 directories, 33 files
+
+
+================================================================================
+FILE CONTENTS
+================================================================================
+
+
+================================================================================
+FILE: ./.gitignore
+================================================================================
+
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+
+# ============================================================
+# Virtual environments
+# ============================================================
+
+.venv/
+venv/
+env/
+ENV/
+
+.python-version
+
+# ============================================================
+# uv
+# ============================================================
+
+# uv.lock NAMERNO ostavljamo u git-u
+# pyproject.toml NAMERNO ostavljamo u git-u
+
+# ============================================================
+# PyInstaller
+# ============================================================
+
+build/
+dist/
+
+*.manifest
+
+# ShrinkWrap.spec NAMERNO ostavljamo u git-u
+# Ako nekad budeš generisao privremene spec fajlove:
+# *.spec
+
+# ============================================================
+# macOS
+# ============================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+Icon?
+
+._*
+
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# ============================================================
+# IDE / Editors
+# ============================================================
+
+.vscode/
+.idea/
+
+*.swp
+*.swo
+*~
+.#*
+*.code-workspace
+
+# ============================================================
+# Logs / temporary files
+# ============================================================
+
+*.log
+*.tmp
+*.temp
+*.cache
+
+tmp/
+temp/
+.cache/
+
+# ============================================================
+# Backups / automatic cleanup files
+# ============================================================
+
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+
+*.bak.*
+*.backup.*
+*.old.*
+
+*_backup
+*_backup.*
+*_bak
+*_bak.*
+*_old
+*_old.*
+
+backup/
+backups/
+
+# ============================================================
+# Generated/exported geometry
+# ============================================================
+
+# Ako output STL/OBJ/PLY fajlovi služe samo kao rezultat programa,
+# drži ih van git-a.
+exports/
+output/
+outputs/
+
+# Po želji možeš uključiti i ovo:
+# *.stl
+# *.obj
+# *.ply
+# *.3mf
+
+# ============================================================
+# Packaging / distribution
+# ============================================================
+
+*.dmg
+*.pkg
+*.zip
+*.tar
+*.tar.gz
+
+# ============================================================
+# Misc
+# ============================================================
+
+Thumbs.db
+Desktop.ini
+
+
+
+================================================================================
+FILE: ./CMakeLists.txt
+================================================================================
+
+cmake_minimum_required(VERSION 3.20)
+
+project(
+    ShrinkWrapNative
+    VERSION 0.1.0
+    LANGUAGES CXX
+)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(
+    Python
+    COMPONENTS
+        Interpreter
+        Development.Module
+    REQUIRED
+)
+
+find_package(CGAL REQUIRED)
+find_package(Eigen3 REQUIRED NO_MODULE)
+
+find_package(
+    pybind11
+    CONFIG
+    REQUIRED
+)
+
+add_subdirectory(native)
+
+
+
+================================================================================
+FILE: ./README.md
+================================================================================
+
+# ShrinkWrap
+
+ShrinkWrap is a lightweight tool for converting detailed PCB assembly models into simplified, 3D-printable envelope geometry.
+
+Instead of preserving every resistor lead, connector detail, solder joint, and component feature, ShrinkWrap generates a smooth outer surface around the PCB assembly — similar to stretching a sheet of fabric over the board.
+
+The goal is to preserve the dimensions and overall volume of a PCB assembly while dramatically reducing geometric complexity.
+
+## Features
+
+- Import STL, OBJ, PLY, GLB and GLTF models
+- Interactive OpenGL 3D viewport
+- Orbit, pan and zoom controls
+- Automatic XY height-map generation
+- Top and bottom PCB envelope generation
+- Preserves the overall thickness of the assembly
+- Adjustable sampling resolution
+- Adjustable gap bridging
+- Adjustable cloth slope
+- Surface smoothing
+- Configurable clearance
+- Wireframe preview
+- Switch between original and generated geometry
+- Export generated geometry to STL, OBJ, PLY or GLB
+
+## How it works
+
+ShrinkWrap converts the input model into two height fields:
+
+```text
+                    TOP ENVELOPE
+                 ____--------____
+              __/                \__
+             /                      \
+============ PCB ASSEMBLY ============
+             \__                  __/
+                \____--------____/
+                   BOTTOM ENVELOPE
+
+
+
+================================================================================
+FILE: ./ShrinkWrap.spec
+================================================================================
+
+# -*- mode: python ; coding: utf-8 -*-
+
+from pathlib import Path
+import sys
+
+from PyInstaller.utils.hooks import (
+    collect_dynamic_libs,
+    collect_submodules,
+)
+
+PROJECT_ROOT = Path(SPECPATH).resolve()
+
+# ============================================================
+# NATIVE SHRINKWRAP MODULE
+# ============================================================
+
+native_candidates = sorted(
+    (PROJECT_ROOT / "core").glob("_native*.so")
+)
+
+if not native_candidates:
+    raise RuntimeError(
+        "\n\n"
+        "ShrinkWrap native C++ module was not found.\n"
+        "Build it first with CMake before running PyInstaller.\n\n"
+        "Expected something like:\n"
+        "    core/_native.cpython-314-darwin.so\n"
+    )
+
+NATIVE_MODULE = native_candidates[0]
+
+print()
+print("=" * 72)
+print("ShrinkWrap PyInstaller")
+print("=" * 72)
+print(f"Project:       {PROJECT_ROOT}")
+print(f"Native module: {NATIVE_MODULE}")
+print()
+
+
+# ============================================================
+# DATA FILES
+# ============================================================
+
+datas = [
+    (
+        str(PROJECT_ROOT / "shaders"),
+        "shaders",
+    ),
+]
+
+
+# ============================================================
+# BINARIES
+# ============================================================
+
+#
+# Explicitly bundle our pybind11 extension.
+#
+# PyInstaller will inspect its Mach-O dependencies and pull in
+# required non-system dynamic libraries where applicable.
+#
+binaries = [
+    (
+        str(NATIVE_MODULE),
+        "core",
+    ),
+]
+
+
+# ============================================================
+# HIDDEN IMPORTS
+# ============================================================
+
+hiddenimports = [
+    "core._native",
+
+    # PyOpenGL dynamically resolves quite a bit at runtime.
+    "OpenGL",
+    "OpenGL.GL",
+    "OpenGL.arrays",
+    "OpenGL.arrays.vbo",
+
+    # Keep the important SciPy namespaces explicit.
+    "scipy",
+    "scipy.ndimage",
+
+    # trimesh uses lazy/dynamic imports in several places.
+    "trimesh",
+]
+
+hiddenimports += collect_submodules(
+    "OpenGL"
+)
+
+
+# ============================================================
+# ANALYSIS
+# ============================================================
+
+a = Analysis(
+    [
+        str(PROJECT_ROOT / "main.py"),
+    ],
+
+    pathex=[
+        str(PROJECT_ROOT),
+    ],
+
+    binaries=binaries,
+    datas=datas,
+
+    hiddenimports=hiddenimports,
+
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+
+    excludes=[
+        "pytest",
+        "IPython",
+        "jupyter",
+        "matplotlib",
+    ],
+
+    noarchive=False,
+    optimize=1,
+)
+
+
+# ============================================================
+# PYZ
+# ============================================================
+
+pyz = PYZ(
+    a.pure
+)
+
+
+# ============================================================
+# EXECUTABLE
+# ============================================================
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+
+    exclude_binaries=True,
+
+    name="ShrinkWrap",
+
+    debug=False,
+    bootloader_ignore_signals=False,
+
+    strip=False,
+    upx=False,
+
+    console=False,
+
+    argv_emulation=False,
+
+    target_arch="arm64",
+)
+
+
+# ============================================================
+# COLLECT
+# ============================================================
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+
+    strip=False,
+    upx=False,
+
+    name="ShrinkWrap",
+)
+
+
+# ============================================================
+# macOS APP BUNDLE
+# ============================================================
+
+app = BUNDLE(
+    coll,
+
+    name="ShrinkWrap.app",
+
+    icon=None,
+
+    bundle_identifier="com.shrinkwrap.app",
+
+    info_plist={
+        "CFBundleName": "ShrinkWrap",
+        "CFBundleDisplayName": "ShrinkWrap",
+
+        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": "1",
+
+        "NSHighResolutionCapable": True,
+
+        # Qt/OpenGL application.
+        "LSMinimumSystemVersion": "13.0",
+
+        "NSPrincipalClass": "NSApplication",
+    },
+)
+
+
+
+================================================================================
+FILE: ./build_app.sh
+================================================================================
+
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+echo
+echo "============================================================"
+echo " ShrinkWrap — native build"
+echo "============================================================"
+echo
+
+PYTHON_EXECUTABLE="$(
+    uv run python -c 'import sys; print(sys.executable)'
+)"
+
+PYBIND11_DIR="$(
+    uv run python -m pybind11 --cmakedir
+)"
+
+cmake \
+    -S . \
+    -B build/native \
+    -G Ninja \
+    -DPython_EXECUTABLE="$PYTHON_EXECUTABLE" \
+    -Dpybind11_DIR="$PYBIND11_DIR" \
+    -DCMAKE_BUILD_TYPE=Release
+
+cmake --build \
+    build/native \
+    --parallel
+
+
+echo
+echo "============================================================"
+echo " ShrinkWrap — native smoke test"
+echo "============================================================"
+echo
+
+uv run python - <<'PY'
+from core import _native
+
+print("Native module:", _native)
+print("project_mesh:", _native.project_mesh)
+print("propagate_relief:", _native.propagate_relief)
+print("regularizer:", _native.regularize_steep_surface)
+print("adaptive mesher:", _native.adaptive_envelope_to_mesh)
+print("QEM:", _native.simplify_qem)
+PY
+
+
+echo
+echo "============================================================"
+echo " ShrinkWrap — macOS icon"
+echo "============================================================"
+echo
+
+if [[ -f "icon.png" ]]; then
+    echo "Generating icon.icns from icon.png..."
+
+    rm -rf icon.iconset
+    mkdir -p icon.iconset
+
+    sips -z 16 16 \
+        icon.png \
+        --out icon.iconset/icon_16x16.png \
+        >/dev/null
+
+    sips -z 32 32 \
+        icon.png \
+        --out icon.iconset/icon_16x16@2x.png \
+        >/dev/null
+
+    sips -z 32 32 \
+        icon.png \
+        --out icon.iconset/icon_32x32.png \
+        >/dev/null
+
+    sips -z 64 64 \
+        icon.png \
+        --out icon.iconset/icon_32x32@2x.png \
+        >/dev/null
+
+    sips -z 128 128 \
+        icon.png \
+        --out icon.iconset/icon_128x128.png \
+        >/dev/null
+
+    sips -z 256 256 \
+        icon.png \
+        --out icon.iconset/icon_128x128@2x.png \
+        >/dev/null
+
+    sips -z 256 256 \
+        icon.png \
+        --out icon.iconset/icon_256x256.png \
+        >/dev/null
+
+    sips -z 512 512 \
+        icon.png \
+        --out icon.iconset/icon_256x256@2x.png \
+        >/dev/null
+
+    sips -z 512 512 \
+        icon.png \
+        --out icon.iconset/icon_512x512.png \
+        >/dev/null
+
+    sips -z 1024 1024 \
+        icon.png \
+        --out icon.iconset/icon_512x512@2x.png \
+        >/dev/null
+
+    iconutil \
+        -c icns \
+        icon.iconset \
+        -o icon.icns
+
+    rm -rf icon.iconset
+
+    echo "Created: icon.icns"
+
+elif [[ -f "icon.icns" ]]; then
+    echo "icon.png not found."
+    echo "Using existing icon.icns."
+
+else
+    echo "ERROR: icon.png or icon.icns not found."
+    echo
+    echo "Place icon.png in the project root."
+    exit 1
+fi
+
+
+echo
+echo "============================================================"
+echo " ShrinkWrap — PyInstaller"
+echo "============================================================"
+echo
+
+rm -rf \
+    build/ShrinkWrap \
+    dist/ShrinkWrap \
+    dist/ShrinkWrap.app
+
+uv run pyinstaller \
+    --clean \
+    --noconfirm \
+    ShrinkWrap.spec
+
+
+echo
+echo "============================================================"
+echo " ShrinkWrap — result"
+echo "============================================================"
+echo
+
+if [[ ! -d "dist/ShrinkWrap.app" ]]; then
+    echo "ERROR: dist/ShrinkWrap.app was not created."
+    exit 1
+fi
+
+echo "Created:"
+echo
+echo "    dist/ShrinkWrap.app"
+echo
+
+du -sh \
+    dist/ShrinkWrap.app
+
+
+echo
+echo "App icon:"
+find \
+    dist/ShrinkWrap.app/Contents/Resources \
+    -name '*.icns' \
+    -print
+
+
+echo
+echo "Native extension:"
+find \
+    dist/ShrinkWrap.app \
+    -name '_native*.so' \
+    -print
+
+
+echo
+echo "Shaders:"
+find \
+    dist/ShrinkWrap.app \
+    -path '*shaders*' \
+    -type f \
+    -print
+
+
+echo
+echo "Mach-O dependencies:"
+NATIVE="$(
+    find \
+        dist/ShrinkWrap.app \
+        -name '_native*.so' \
+        -print \
+        -quit
+)"
+
+if [[ -n "$NATIVE" ]]; then
+    otool -L "$NATIVE"
+fi
+
+
+echo
+echo "============================================================"
+echo " ShrinkWrap.app ready"
+echo "============================================================"
+echo
+echo "    dist/ShrinkWrap.app"
+echo
+echo "Run with:"
+echo
+echo "    open dist/ShrinkWrap.app"
+echo
+
+
+
+================================================================================
+FILE: ./core/__init__.py
+================================================================================
+
+
+
+
+================================================================================
+FILE: ./core/drill.py
+================================================================================
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import re
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class DrillHole:
+    x: float
+    y: float
+    diameter: float
+    plated: bool
+    source: str = ""
+
+
+_TOOL_RE = re.compile(
+    r"^T(\d+)C([+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+)
+
+_SELECT_TOOL_RE = re.compile(
+    r"^T(\d+)$"
+)
+
+_X_RE = re.compile(
+    r"X([+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+)
+
+_Y_RE = re.compile(
+    r"Y([+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+)
+
+
+def load_excellon(
+    path: str | Path,
+    *,
+    plated: bool,
+) -> list[DrillHole]:
+    """
+    Parser za KiCad Excellon .drl fajlove.
+
+    Trenutno podržava ono što KiCad generiše u našim
+    fajlovima:
+
+        METRIC
+        absolute coordinates
+        decimal coordinates
+        TnCdiameter
+        Tn
+        X...Y...
+
+    Takođe podržava modalne X/Y koordinate:
+    ako linija nema X ili Y, koristi prethodnu vrednost.
+    """
+
+    path = Path(path)
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Drill file does not exist: {path}"
+        )
+
+    lines = path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    ).splitlines()
+
+    units_scale = 1.0
+
+    tools: dict[int, float] = {}
+
+    current_tool: int | None = None
+    current_x: float | None = None
+    current_y: float | None = None
+
+    holes: list[DrillHole] = []
+
+    for raw_line in lines:
+
+        line = raw_line.strip()
+
+        if not line:
+            continue
+
+        if line.startswith(";"):
+            continue
+
+        upper = line.upper()
+
+        if upper == "METRIC":
+            units_scale = 1.0
+            continue
+
+        if upper in (
+            "INCH",
+            "M72",
+        ):
+            units_scale = 25.4
+            continue
+
+        tool_definition = _TOOL_RE.match(
+            upper
+        )
+
+        if tool_definition:
+
+            tool_number = int(
+                tool_definition.group(1)
+            )
+
+            diameter = float(
+                tool_definition.group(2)
+            ) * units_scale
+
+            tools[
+                tool_number
+            ] = diameter
+
+            continue
+
+        tool_selection = (
+            _SELECT_TOOL_RE.match(
+                upper
+            )
+        )
+
+        if tool_selection:
+
+            tool_number = int(
+                tool_selection.group(1)
+            )
+
+            #
+            # T0 može da znači cancel.
+            #
+            if tool_number == 0:
+                current_tool = None
+            else:
+                current_tool = (
+                    tool_number
+                )
+
+            continue
+
+        x_match = _X_RE.search(
+            upper
+        )
+
+        y_match = _Y_RE.search(
+            upper
+        )
+
+        #
+        # Nema koordinata.
+        #
+        if (
+            x_match is None
+            and
+            y_match is None
+        ):
+            continue
+
+        if x_match is not None:
+            current_x = (
+                float(
+                    x_match.group(1)
+                )
+                *
+                units_scale
+            )
+
+        if y_match is not None:
+            current_y = (
+                float(
+                    y_match.group(1)
+                )
+                *
+                units_scale
+            )
+
+        if (
+            current_x is None
+            or
+            current_y is None
+            or
+            current_tool is None
+        ):
+            continue
+
+        diameter = tools.get(
+            current_tool
+        )
+
+        if diameter is None:
+            continue
+
+        holes.append(
+            DrillHole(
+                x=float(current_x),
+                y=float(current_y),
+                diameter=float(diameter),
+                plated=plated,
+                source=path.name,
+            )
+        )
+
+    return deduplicate_holes(
+        holes
+    )
+
+
+def deduplicate_holes(
+    holes: list[DrillHole],
+    tolerance_mm: float = 0.01,
+) -> list[DrillHole]:
+    """
+    Ako na praktično istom XY mestu postoji više drill
+    operacija, ostavljamo najveći prečnik.
+
+    Ovo je bitno za tvoj NPTH:
+    na X78.38 Y-79.07 postoje i 3.0 i 3.5 mm.
+    """
+
+    result: list[DrillHole] = []
+
+    for hole in holes:
+
+        found_index = None
+
+        for i, existing in enumerate(
+            result
+        ):
+
+            dx = (
+                hole.x
+                -
+                existing.x
+            )
+
+            dy = (
+                hole.y
+                -
+                existing.y
+            )
+
+            if (
+                dx * dx
+                +
+                dy * dy
+                <=
+                tolerance_mm
+                *
+                tolerance_mm
+            ):
+                found_index = i
+                break
+
+        if found_index is None:
+
+            result.append(
+                hole
+            )
+
+            continue
+
+        existing = result[
+            found_index
+        ]
+
+        if (
+            hole.diameter
+            >
+            existing.diameter
+        ):
+            result[
+                found_index
+            ] = hole
+
+    return result
+
+
+def filter_drills(
+    holes: list[DrillHole],
+    min_diameter_mm: float = 0.0,
+) -> list[DrillHole]:
+
+    return [
+        hole
+        for hole in holes
+        if (
+            hole.diameter
+            >=
+            min_diameter_mm
+        )
+    ]
+
+
+def transform_drills(
+    holes: list[DrillHole],
+    *,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    flip_x: bool = False,
+    flip_y: bool = False,
+    center_x: float = 0.0,
+    center_y: float = 0.0,
+) -> list[DrillHole]:
+    """
+    Transformacija drill koordinata u coordinate system
+    3D modela.
+
+    Flip se radi oko center_x / center_y.
+    """
+
+    transformed: list[DrillHole] = []
+
+    for hole in holes:
+
+        x = hole.x
+        y = hole.y
+
+        if flip_x:
+            x = (
+                2.0 * center_x
+                -
+                x
+            )
+
+        if flip_y:
+            y = (
+                2.0 * center_y
+                -
+                y
+            )
+
+        x += offset_x
+        y += offset_y
+
+        transformed.append(
+            DrillHole(
+                x=x,
+                y=y,
+                diameter=hole.diameter,
+                plated=hole.plated,
+                source=hole.source,
+            )
+        )
+
+    return transformed
+
+
+def drill_bounds(
+    holes: list[DrillHole],
+) -> tuple[
+    float,
+    float,
+    float,
+    float,
+] | None:
+
+    if not holes:
+        return None
+
+    xs = np.asarray(
+        [hole.x for hole in holes],
+        dtype=np.float64,
+    )
+
+    ys = np.asarray(
+        [hole.y for hole in holes],
+        dtype=np.float64,
+    )
+
+    return (
+        float(xs.min()),
+        float(ys.min()),
+        float(xs.max()),
+        float(ys.max()),
+    )
+
+
+def drill_center(
+    holes: list[DrillHole],
+) -> tuple[float, float] | None:
+
+    bounds = drill_bounds(
+        holes
+    )
+
+    if bounds is None:
+        return None
+
+    min_x, min_y, max_x, max_y = (
+        bounds
+    )
+
+    return (
+        (
+            min_x + max_x
+        ) * 0.5,
+        (
+            min_y + max_y
+        ) * 0.5,
+    )
+
+
+================================================================================
+FILE: ./core/envelope.py
+================================================================================
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+try:
+    from core import _native
+except ImportError:
+    _native = None
+
+import trimesh
+from scipy import ndimage
+
+from core.drill import DrillHole
+from core.heightmap import HeightMap
+
+
+# ============================================================
+# DATA
+# ============================================================
+
+
+@dataclass
+class Envelope:
+    top: np.ndarray
+    bottom: np.ndarray
+
+    #
+    # Rigidni PCB footprint PRE oduzimanja NPTH.
+    #
+    pcb_mask: np.ndarray
+
+    #
+    # Tačne NPTH geometrije iz Excellon-a.
+    #
+    holes: tuple[DrillHole, ...]
+
+    min_x: float
+    min_y: float
+    resolution: float
+
+    pcb_top_z: float
+    pcb_bottom_z: float
+    pcb_thickness: float
+
+
+# ============================================================
+# PUBLIC
+# ============================================================
+
+
+def build_envelope(
+    heightmap: HeightMap,
+    smoothing_mm: float = 0.4,
+    clearance_mm: float = 0.0,
+    bridge_mm: float = 4.0,
+    slope_degrees: float = 55.0,
+    holes: list[DrillHole] | None = None,
+    hole_keepout_mm: float = 1.5,
+) -> Envelope:
+    """
+    Finalni model se sastoji od:
+
+        RIGID PCB
+        +
+        TOP COMPONENT RELIEF
+        +
+        BOTTOM COMPONENT RELIEF
+        -
+        NPTH HOLES
+
+    PCB baza nikada ne prolazi kroz cloth algoritam.
+
+    Cloth radi samo nad pozitivnim relief-om iznad
+    pcb_top_z i ispod pcb_bottom_z.
+    """
+
+    holes = list(
+        holes or []
+    )
+
+    raw_top = np.asarray(
+        heightmap.raw_top,
+        dtype=np.float32,
+    )
+
+    raw_bottom = np.asarray(
+        heightmap.raw_bottom,
+        dtype=np.float32,
+    )
+
+    pcb_mask = np.asarray(
+        heightmap.pcb_mask,
+        dtype=bool,
+    )
+
+    if not np.any(
+        pcb_mask
+    ):
+        raise ValueError(
+            "PCB mask is empty."
+        )
+
+    pcb_top_z = float(
+        heightmap.pcb_top_z
+    )
+
+    pcb_bottom_z = float(
+        heightmap.pcb_bottom_z
+    )
+
+    #
+    # ========================================================
+    # COMPONENT RELIEF
+    # ========================================================
+    #
+    # Na mestima gde projection nije pogodio geometriju
+    # relief je nula.
+    #
+    # PCB sam po sebi takođe daje relief = 0.
+    #
+
+    top_relief = np.zeros_like(
+        raw_top,
+        dtype=np.float32,
+    )
+
+    bottom_relief = np.zeros_like(
+        raw_bottom,
+        dtype=np.float32,
+    )
+
+    valid_top = np.isfinite(
+        raw_top
+    )
+
+    valid_bottom = np.isfinite(
+        raw_bottom
+    )
+
+    #
+    # Sve iznad gornje PCB ravni.
+    #
+    top_component = (
+        pcb_mask
+        &
+        valid_top
+        &
+        (
+            raw_top
+            >
+            pcb_top_z
+            +
+            1e-4
+        )
+    )
+
+    top_relief[
+        top_component
+    ] = (
+        raw_top[
+            top_component
+        ]
+        -
+        pcb_top_z
+    )
+
+    #
+    # Sve ispod donje PCB ravni.
+    #
+    bottom_component = (
+        pcb_mask
+        &
+        valid_bottom
+        &
+        (
+            raw_bottom
+            <
+            pcb_bottom_z
+            -
+            1e-4
+        )
+    )
+
+    bottom_relief[
+        bottom_component
+    ] = (
+        pcb_bottom_z
+        -
+        raw_bottom[
+            bottom_component
+        ]
+    )
+
+    #
+    # ========================================================
+    # CLOTH
+    # ========================================================
+    #
+
+    top_cloth = _build_relief_cloth(
+        relief=top_relief,
+        pcb_mask=pcb_mask,
+
+        resolution=heightmap.resolution,
+
+        bridge_mm=bridge_mm,
+        smoothing_mm=smoothing_mm,
+        slope_degrees=slope_degrees,
+    )
+
+    bottom_cloth = _build_relief_cloth(
+        relief=bottom_relief,
+        pcb_mask=pcb_mask,
+
+        resolution=heightmap.resolution,
+
+        bridge_mm=bridge_mm,
+        smoothing_mm=smoothing_mm,
+        slope_degrees=slope_degrees,
+    )
+
+    #
+    # ========================================================
+    # RIGID PCB EDGE
+    # ========================================================
+    #
+    # Sam boundary PCB-a mora ostati upravo PCB top/bottom.
+    #
+    # Znači component relief ne sme da napravi visoki
+    # vertikalni zid na samoj ivici.
+    #
+    boundary = _mask_boundary(
+        pcb_mask
+    )
+
+    top_cloth[
+        boundary
+    ] = 0.0
+
+    bottom_cloth[
+        boundary
+    ] = 0.0
+
+    #
+    # ========================================================
+    # NPTH KEEPOUT
+    # ========================================================
+    #
+    # Screw/mounting zona:
+    #
+    # cloth se uklanja u:
+    #
+    #     hole radius + keepout
+    #
+    # ali PCB visina ostaje tačno pcb_top / pcb_bottom.
+    #
+    if holes and hole_keepout_mm > 0.0:
+
+        keepout_weight = _make_hole_keepout_weight(
+            heightmap=heightmap,
+            holes=holes,
+            keepout_mm=hole_keepout_mm,
+
+            #
+            # Mali anti-alias / transition pojas.
+            # Ne menja nominalnu keepout dimenziju,
+            # samo uklanja raster stepenice.
+            #
+            feather_mm=max(
+                0.15,
+                heightmap.resolution * 1.5,
+            ),
+        )
+
+        #
+        # weight:
+        #
+        #   0.0 = rigid PCB, nema cloth-a
+        #   1.0 = puni cloth
+        #
+        top_cloth *= keepout_weight
+        bottom_cloth *= keepout_weight
+
+    #
+    # ========================================================
+    # FINAL SURFACES
+    # ========================================================
+    #
+
+    top = (
+        pcb_top_z
+        +
+        top_cloth
+    )
+
+    bottom = (
+        pcb_bottom_z
+        -
+        bottom_cloth
+    )
+
+    #
+    # Clearance se primenjuje SAMO tamo gde postoji relief.
+    #
+    # Ne povećavamo samu rigidnu PCB debljinu.
+    #
+    if clearance_mm > 0.0:
+
+        top_has_relief = (
+            top_cloth
+            >
+            1e-5
+        )
+
+        bottom_has_relief = (
+            bottom_cloth
+            >
+            1e-5
+        )
+
+        top[
+            top_has_relief
+        ] += clearance_mm
+
+        bottom[
+            bottom_has_relief
+        ] -= clearance_mm
+
+    print(
+        "[envelope] "
+        f"top relief max={float(np.max(top_cloth)):.3f} mm | "
+        f"bottom relief max={float(np.max(bottom_cloth)):.3f} mm | "
+        f"NPTH={len(holes)}"
+    )
+
+    return Envelope(
+        top=top.astype(
+            np.float32
+        ),
+
+        bottom=bottom.astype(
+            np.float32
+        ),
+
+        pcb_mask=pcb_mask.copy(),
+
+        holes=tuple(holes),
+
+        min_x=heightmap.min_x,
+        min_y=heightmap.min_y,
+
+        resolution=heightmap.resolution,
+
+        pcb_top_z=pcb_top_z,
+        pcb_bottom_z=pcb_bottom_z,
+
+        pcb_thickness=(
+            pcb_top_z
+            -
+            pcb_bottom_z
+        ),
+    )
+
+
+# ============================================================
+# CLOTH ON RELIEF ONLY
+# ============================================================
+
+
+def _build_relief_cloth(
+    relief: np.ndarray,
+    pcb_mask: np.ndarray,
+    resolution: float,
+    bridge_mm: float,
+    smoothing_mm: float,
+    slope_degrees: float,
+) -> np.ndarray:
+    """
+    Cloth algoritam nikada ne vidi apsolutni PCB Z.
+
+    On vidi samo:
+
+        0 mm   = gola PCB površina
+        >0 mm  = komponenta iznad PCB-a
+
+    Time PCB više ne može slučajno da dobije slope.
+    """
+
+    original = np.asarray(
+        relief,
+        dtype=np.float32,
+    )
+
+    result = original.copy()
+
+    #
+    # Van PCB-a ništa ne postoji.
+    #
+    result[
+        ~pcb_mask
+    ] = 0.0
+
+    # --------------------------------------------------------
+    # BRIDGE
+    # --------------------------------------------------------
+
+    if bridge_mm > 0.0:
+
+        radius_px = max(
+            1,
+            int(
+                round(
+                    bridge_mm
+                    /
+                    resolution
+                )
+            ),
+        )
+
+        size = (
+            radius_px * 2
+            +
+            1
+        )
+
+        bridged = ndimage.grey_closing(
+            result,
+
+            size=(
+                size,
+                size,
+            ),
+
+            mode="constant",
+            cval=0.0,
+        )
+
+        result[
+            pcb_mask
+        ] = bridged[
+            pcb_mask
+        ]
+
+    # --------------------------------------------------------
+    # SLOPE
+    # --------------------------------------------------------
+
+    slope_degrees = float(
+        np.clip(
+            slope_degrees,
+            2.0,
+            88.0,
+        )
+    )
+
+    drop_per_pixel = (
+        np.tan(
+            np.radians(
+                slope_degrees
+            )
+        )
+        *
+        resolution
+    )
+
+    result = _propagate_relief(
+        relief=result,
+
+        pcb_mask=pcb_mask,
+
+        drop_per_pixel=drop_per_pixel,
+    )
+
+    # --------------------------------------------------------
+    # STEEP-SURFACE REGULARIZATION
+    # --------------------------------------------------------
+    #
+    # Very steep raster-generated cloth ramps can contain
+    # tiny staircase/faceting artifacts. They are not real
+    # component geometry, so locally approximate planar
+    # regions are regularized before meshing.
+    #
+    # Pixels occupied by the original component relief are
+    # locked and never modified.
+    #
+
+    if (
+        _native is not None
+        and
+        hasattr(
+            _native,
+            "regularize_steep_surface",
+        )
+        and
+        slope_degrees >= 70.0
+    ):
+        result = np.ascontiguousarray(
+            result,
+            dtype=np.float32,
+        )
+
+        original_native = np.ascontiguousarray(
+            original,
+            dtype=np.float32,
+        )
+
+        mask_native = np.ascontiguousarray(
+            pcb_mask,
+            dtype=np.bool_,
+        )
+
+        regularizer_radius = int(
+            np.clip(
+                round(
+                    0.30
+                    /
+                    resolution
+                ),
+                2,
+                12,
+            )
+        )
+
+        regularizer_tolerance = max(
+            0.010,
+            min(
+                0.030,
+                resolution * 0.25,
+            ),
+        )
+
+        _native.regularize_steep_surface(
+            result,
+            original_native,
+            mask_native,
+
+            float(resolution),
+
+            70.0,
+            float(
+                regularizer_tolerance
+            ),
+
+            regularizer_radius,
+            2,
+        )
+
+        #
+        # Hard safety constraint:
+        # never pass through original geometry.
+        #
+        np.maximum(
+            result,
+            original,
+            out=result,
+        )
+
+    # --------------------------------------------------------
+    # SMOOTHING
+    # --------------------------------------------------------
+
+    if smoothing_mm > 0.0:
+
+        sigma = (
+            smoothing_mm
+            /
+            resolution
+        )
+
+        #
+        # Mask-aware smoothing:
+        #
+        # sprečava zero prostor VAN PCB-a da vuče
+        # samu PCB ivicu naniže.
+        #
+        values = ndimage.gaussian_filter(
+            result
+            *
+            pcb_mask.astype(
+                np.float32
+            ),
+
+            sigma=sigma,
+
+            mode="constant",
+            cval=0.0,
+        )
+
+        weights = ndimage.gaussian_filter(
+            pcb_mask.astype(
+                np.float32
+            ),
+
+            sigma=sigma,
+
+            mode="constant",
+            cval=0.0,
+        )
+
+        smooth = np.zeros_like(
+            result
+        )
+
+        valid = (
+            weights
+            >
+            1e-6
+        )
+
+        smooth[
+            valid
+        ] = (
+            values[
+                valid
+            ]
+            /
+            weights[
+                valid
+            ]
+        )
+
+        #
+        # Cloth nikada ne sme proći kroz originalni
+        # component relief.
+        #
+        result[
+            pcb_mask
+        ] = np.maximum(
+            original[
+                pcb_mask
+            ],
+
+            smooth[
+                pcb_mask
+            ],
+        )
+
+    result[
+        ~pcb_mask
+    ] = 0.0
+
+    result = np.maximum(
+        result,
+        original,
+    )
+
+    return result
+
+
+def _propagate_relief(
+    relief: np.ndarray,
+    pcb_mask: np.ndarray,
+    drop_per_pixel: float,
+) -> np.ndarray:
+    """Native C++ relief propagation with Python fallback."""
+
+    if _native is None:
+        return _propagate_relief_python(
+            relief=relief,
+            pcb_mask=pcb_mask,
+            drop_per_pixel=drop_per_pixel,
+        )
+
+    result = np.ascontiguousarray(
+        relief,
+        dtype=np.float32,
+    ).copy()
+
+    mask = np.ascontiguousarray(
+        pcb_mask,
+        dtype=np.bool_,
+    )
+
+    _native.propagate_relief(
+        result,
+        mask,
+        float(drop_per_pixel),
+    )
+
+    return result
+
+
+def _propagate_relief_python(
+    relief: np.ndarray,
+    pcb_mask: np.ndarray,
+    drop_per_pixel: float,
+) -> np.ndarray:
+    """
+    Slope propagation SAMO unutar PCB footprint-a.
+
+    Ne može preći preko PCB edge-a.
+    """
+
+    result = relief.copy()
+
+    h, w = (
+        result.shape
+    )
+
+    #
+    # LEFT -> RIGHT
+    #
+    for y in range(h):
+
+        for x in range(
+            1,
+            w,
+        ):
+
+            if not (
+                pcb_mask[y, x]
+                and
+                pcb_mask[y, x - 1]
+            ):
+                continue
+
+            candidate = max(
+                0.0,
+
+                result[
+                    y,
+                    x - 1
+                ]
+                -
+                drop_per_pixel,
+            )
+
+            if candidate > result[
+                y,
+                x
+            ]:
+
+                result[
+                    y,
+                    x
+                ] = candidate
+
+        #
+        # RIGHT -> LEFT
+        #
+        for x in range(
+            w - 2,
+            -1,
+            -1,
+        ):
+
+            if not (
+                pcb_mask[y, x]
+                and
+                pcb_mask[y, x + 1]
+            ):
+                continue
+
+            candidate = max(
+                0.0,
+
+                result[
+                    y,
+                    x + 1
+                ]
+                -
+                drop_per_pixel,
+            )
+
+            if candidate > result[
+                y,
+                x
+            ]:
+
+                result[
+                    y,
+                    x
+                ] = candidate
+
+    #
+    # BOTTOM -> TOP
+    #
+    for x in range(w):
+
+        for y in range(
+            1,
+            h,
+        ):
+
+            if not (
+                pcb_mask[y, x]
+                and
+                pcb_mask[y - 1, x]
+            ):
+                continue
+
+            candidate = max(
+                0.0,
+
+                result[
+                    y - 1,
+                    x
+                ]
+                -
+                drop_per_pixel,
+            )
+
+            if candidate > result[
+                y,
+                x
+            ]:
+
+                result[
+                    y,
+                    x
+                ] = candidate
+
+        #
+        # TOP -> BOTTOM
+        #
+        for y in range(
+            h - 2,
+            -1,
+            -1,
+        ):
+
+            if not (
+                pcb_mask[y, x]
+                and
+                pcb_mask[y + 1, x]
+            ):
+                continue
+
+            candidate = max(
+                0.0,
+
+                result[
+                    y + 1,
+                    x
+                ]
+                -
+                drop_per_pixel,
+            )
+
+            if candidate > result[
+                y,
+                x
+            ]:
+
+                result[
+                    y,
+                    x
+                ] = candidate
+
+    return result
+
+
+# ============================================================
+# MASKS
+# ============================================================
+
+
+def _mask_boundary(
+    mask: np.ndarray,
+) -> np.ndarray:
+    """
+    Tačno jedan raster sloj unutrašnje PCB ivice.
+    """
+
+    eroded = ndimage.binary_erosion(
+        mask,
+
+        structure=np.ones(
+            (3, 3),
+            dtype=bool,
+        ),
+
+        border_value=0,
+    )
+
+    return (
+        mask
+        &
+        ~eroded
+    )
+
+
+def _make_hole_keepout_weight(
+    heightmap: HeightMap,
+    holes,
+    keepout_mm: float,
+    feather_mm: float,
+) -> np.ndarray:
+    """
+    RAM-efficient analytic hole keepout.
+
+    Each hole is evaluated only inside its local bounding box
+    instead of constructing a full-grid distance map.
+    """
+
+    h, w = heightmap.raw_top.shape
+
+    result = np.ones(
+        (h, w),
+        dtype=np.float32,
+    )
+
+    if not holes:
+        return result
+
+    resolution = float(
+        heightmap.resolution
+    )
+
+    min_x = float(
+        heightmap.min_x
+    )
+
+    min_y = float(
+        heightmap.min_y
+    )
+
+    feather_mm = max(
+        1e-6,
+        float(feather_mm),
+    )
+
+    for hole in holes:
+
+        hx = float(hole.x)
+        hy = float(hole.y)
+
+        radius = (
+            float(hole.diameter)
+            *
+            0.5
+        )
+
+        inner_radius = (
+            radius
+            +
+            float(keepout_mm)
+        )
+
+        outer_radius = (
+            inner_radius
+            +
+            feather_mm
+        )
+
+        extent = (
+            outer_radius
+            +
+            resolution
+        )
+
+        x0 = max(
+            0,
+            int(
+                np.floor(
+                    (
+                        hx
+                        -
+                        extent
+                        -
+                        min_x
+                    )
+                    /
+                    resolution
+                )
+            ),
+        )
+
+        x1 = min(
+            w,
+            int(
+                np.ceil(
+                    (
+                        hx
+                        +
+                        extent
+                        -
+                        min_x
+                    )
+                    /
+                    resolution
+                )
+            )
+            +
+            1,
+        )
+
+        y0 = max(
+            0,
+            int(
+                np.floor(
+                    (
+                        hy
+                        -
+                        extent
+                        -
+                        min_y
+                    )
+                    /
+                    resolution
+                )
+            ),
+        )
+
+        y1 = min(
+            h,
+            int(
+                np.ceil(
+                    (
+                        hy
+                        +
+                        extent
+                        -
+                        min_y
+                    )
+                    /
+                    resolution
+                )
+            )
+            +
+            1,
+        )
+
+        if (
+            x0 >= x1
+            or
+            y0 >= y1
+        ):
+            continue
+
+        xs = (
+            min_x
+            +
+            np.arange(
+                x0,
+                x1,
+                dtype=np.float32,
+            )
+            *
+            resolution
+        )
+
+        ys = (
+            min_y
+            +
+            np.arange(
+                y0,
+                y1,
+                dtype=np.float32,
+            )
+            *
+            resolution
+        )
+
+        dx = (
+            xs[None, :]
+            -
+            np.float32(hx)
+        )
+
+        dy = (
+            ys[:, None]
+            -
+            np.float32(hy)
+        )
+
+        distance = np.sqrt(
+            dx * dx
+            +
+            dy * dy
+        )
+
+        t = (
+            distance
+            -
+            np.float32(
+                inner_radius
+            )
+        )
+
+        t /= np.float32(
+            feather_mm
+        )
+
+        np.clip(
+            t,
+            0.0,
+            1.0,
+            out=t,
+        )
+
+        weight = (
+            t
+            *
+            t
+            *
+            (
+                3.0
+                -
+                2.0 * t
+            )
+        )
+
+        view = result[
+            y0:y1,
+            x0:x1
+        ]
+
+        np.minimum(
+            view,
+            weight,
+            out=view,
+        )
+
+    return result
+
+
+def _build_mesh_phi(
+    pcb_mask: np.ndarray,
+    holes,
+    min_x: float,
+    min_y: float,
+    resolution: float,
+) -> np.ndarray:
+    """
+    RAM-efficient signed-distance field for the native mesher.
+
+    The final field is float32. SciPy EDT still internally
+    produces float64, but only one full-size EDT array is kept
+    alive at a time.
+
+    Analytic drill-hole distance fields are evaluated only in
+    a local bounding box around each hole.
+    """
+
+    pcb_mask = np.asarray(
+        pcb_mask,
+        dtype=bool,
+    )
+
+    h, w = pcb_mask.shape
+
+    # ========================================================
+    # INSIDE DISTANCE
+    # ========================================================
+
+    distance64 = ndimage.distance_transform_edt(
+        pcb_mask
+    )
+
+    distance64 *= resolution
+
+    phi = distance64.astype(
+        np.float32,
+        copy=True,
+    )
+
+    del distance64
+
+    # ========================================================
+    # OUTSIDE DISTANCE
+    # ========================================================
+
+    distance64 = ndimage.distance_transform_edt(
+        ~pcb_mask
+    )
+
+    distance64 *= resolution
+
+    np.subtract(
+        phi,
+        distance64,
+        out=phi,
+        casting="unsafe",
+    )
+
+    del distance64
+
+    # ========================================================
+    # ANALYTIC HOLES — LOCAL ONLY
+    # ========================================================
+
+    if holes:
+
+        margin = max(
+            resolution * 2.5,
+            0.05,
+        )
+
+        for hole in holes:
+
+            hx = float(hole.x)
+            hy = float(hole.y)
+
+            radius = (
+                float(hole.diameter)
+                *
+                0.5
+            )
+
+            extent = (
+                radius
+                +
+                margin
+            )
+
+            x0 = max(
+                0,
+                int(
+                    np.floor(
+                        (
+                            hx
+                            -
+                            extent
+                            -
+                            min_x
+                        )
+                        /
+                        resolution
+                    )
+                ),
+            )
+
+            x1 = min(
+                w,
+                int(
+                    np.ceil(
+                        (
+                            hx
+                            +
+                            extent
+                            -
+                            min_x
+                        )
+                        /
+                        resolution
+                    )
+                )
+                +
+                1,
+            )
+
+            y0 = max(
+                0,
+                int(
+                    np.floor(
+                        (
+                            hy
+                            -
+                            extent
+                            -
+                            min_y
+                        )
+                        /
+                        resolution
+                    )
+                ),
+            )
+
+            y1 = min(
+                h,
+                int(
+                    np.ceil(
+                        (
+                            hy
+                            +
+                            extent
+                            -
+                            min_y
+                        )
+                        /
+                        resolution
+                    )
+                )
+                +
+                1,
+            )
+
+            if (
+                x0 >= x1
+                or
+                y0 >= y1
+            ):
+                continue
+
+            xs = (
+                min_x
+                +
+                np.arange(
+                    x0,
+                    x1,
+                    dtype=np.float32,
+                )
+                *
+                resolution
+            )
+
+            ys = (
+                min_y
+                +
+                np.arange(
+                    y0,
+                    y1,
+                    dtype=np.float32,
+                )
+                *
+                resolution
+            )
+
+            dx = (
+                xs[None, :]
+                -
+                np.float32(hx)
+            )
+
+            dy = (
+                ys[:, None]
+                -
+                np.float32(hy)
+            )
+
+            hole_phi = np.sqrt(
+                dx * dx
+                +
+                dy * dy
+            )
+
+            hole_phi -= np.float32(
+                radius
+            )
+
+            view = phi[
+                y0:y1,
+                x0:x1
+            ]
+
+            np.minimum(
+                view,
+                hole_phi,
+                out=view,
+            )
+
+    return np.ascontiguousarray(
+        phi,
+        dtype=np.float32,
+    )
+
+
+
+def envelope_to_mesh_adaptive(
+    envelope: Envelope,
+    surface_tolerance: float = 0.01,
+    max_span_cells: int = 128,
+) -> trimesh.Trimesh:
+    """
+    Adaptive native C++ mesher.
+
+    Boundary / NPTH clipping ostaje na originalnom phi=0
+    sistemu. Potpuno unutrašnje oblasti se adaptivno
+    pojednostavljuju prema dozvoljenoj Z grešci.
+    """
+
+    if _native is None:
+        raise RuntimeError(
+            "Native ShrinkWrap backend is unavailable."
+        )
+
+    top = np.ascontiguousarray(
+        envelope.top,
+        dtype=np.float32,
+    )
+
+    bottom = np.ascontiguousarray(
+        envelope.bottom,
+        dtype=np.float32,
+    )
+
+    pcb_mask = np.asarray(
+        envelope.pcb_mask,
+        dtype=bool,
+    )
+
+    resolution = float(
+        envelope.resolution
+    )
+
+    phi = _build_mesh_phi(
+        pcb_mask=pcb_mask,
+        holes=envelope.holes,
+        min_x=float(envelope.min_x),
+        min_y=float(envelope.min_y),
+        resolution=resolution,
+    )
+
+    (
+        vertices,
+        faces,
+        adaptive_patches,
+        boundary_cells,
+        base_cells_saved,
+    ) = _native.adaptive_envelope_to_mesh(
+        top,
+        bottom,
+        phi,
+
+        float(envelope.min_x),
+        float(envelope.min_y),
+        resolution,
+
+        float(surface_tolerance),
+        int(max_span_cells),
+    )
+
+    del phi
+
+    # ========================================================
+    # QEM SIMPLIFICATION
+    # ========================================================
+
+    (
+        qem_vertices,
+        qem_faces,
+        qem_input_faces,
+        qem_output_faces,
+        collapsed_edges,
+    ) = _native.simplify_qem(
+        np.ascontiguousarray(
+            vertices,
+            dtype=np.float32,
+        ),
+        np.ascontiguousarray(
+            faces,
+            dtype=np.int64,
+        ),
+        0.25,
+        False,
+    )
+
+    vertices = qem_vertices
+    faces = qem_faces
+
+    print(
+        "[mesh/qem] "
+        f"{qem_input_faces:,} -> "
+        f"{qem_output_faces:,} triangles | "
+        f"reduction="
+        f"{(1.0 - qem_output_faces / qem_input_faces) * 100.0:.2f}% | "
+        f"collapsed={collapsed_edges:,}"
+    )
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=faces,
+        process=False,
+    )
+
+    print(
+        "[mesh/adaptive] "
+        f"simulation={resolution:.4f} mm | "
+        f"tolerance={surface_tolerance:.4f} mm | "
+        f"patches={adaptive_patches:,} | "
+        f"boundary={boundary_cells:,} | "
+        f"saved-base-cells={base_cells_saved:,} | "
+        f"{len(mesh.vertices):,} vertices | "
+        f"{len(mesh.faces):,} triangles"
+    )
+
+    return mesh
+
+
+def envelope_to_mesh(
+    envelope: Envelope,
+    surface_tolerance: float = 0.01,
+    max_span_cells: int = 128,
+) -> trimesh.Trimesh:
+    """
+    Default ShrinkWrap mesher.
+
+    Uses the adaptive native backend to preserve fine surface
+    detail while avoiding unnecessary triangles in flat and
+    slowly-varying regions.
+    """
+
+    if _native is None:
+        return _envelope_to_mesh_python(
+            envelope
+        )
+
+    return envelope_to_mesh_adaptive(
+        envelope=envelope,
+        surface_tolerance=surface_tolerance,
+        max_span_cells=max_span_cells,
+    )
+
+
+def envelope_to_mesh_uniform(
+    envelope: Envelope,
+) -> trimesh.Trimesh:
+    """
+    Uniform native C++ reference mesher.
+
+    Kept primarily for testing, benchmarking and debugging.
+    Normal application use should go through envelope_to_mesh(),
+    which uses the adaptive native backend.
+    """
+
+    if _native is None:
+        return _envelope_to_mesh_python(
+            envelope
+        )
+
+    top = np.ascontiguousarray(
+        envelope.top,
+        dtype=np.float32,
+    )
+
+    bottom = np.ascontiguousarray(
+        envelope.bottom,
+        dtype=np.float32,
+    )
+
+    pcb_mask = np.asarray(
+        envelope.pcb_mask,
+        dtype=bool,
+    )
+
+    if (
+        top.shape != bottom.shape
+        or
+        top.shape != pcb_mask.shape
+    ):
+        raise ValueError(
+            "Envelope arrays have incompatible shapes."
+        )
+
+    resolution = float(
+        envelope.resolution
+    )
+
+    phi = _build_mesh_phi(
+        pcb_mask=pcb_mask,
+        holes=envelope.holes,
+        min_x=float(envelope.min_x),
+        min_y=float(envelope.min_y),
+        resolution=resolution,
+    )
+
+    vertices, faces, active_cells, boundary_cells = (
+        _native.envelope_to_mesh(
+            top,
+            bottom,
+            phi,
+            float(envelope.min_x),
+            float(envelope.min_y),
+            resolution,
+        )
+    )
+
+    del phi
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=faces,
+        process=False,
+    )
+
+    mesh.remove_unreferenced_vertices()
+
+    print(
+        "[mesh/native] "
+        f"resolution={resolution:.4f} mm | "
+        f"cells={active_cells:,} | "
+        f"boundary={boundary_cells:,} | "
+        f"{len(mesh.vertices):,} vertices | "
+        f"{len(mesh.faces):,} triangles"
+    )
+
+    return mesh
+
+
+def _envelope_to_mesh_python(
+    envelope: Envelope,
+) -> trimesh.Trimesh:
+    """
+    Finalni implicitni mesher.
+
+    Koristi direktno envelope grid rezoluciju.
+
+    PCB edge:
+        signed-distance iz pcb_mask-a
+
+    NPTH:
+        analitički krugovi iz Excellon podataka
+
+    Boundary ćelije se seku na sub-pixel phi=0 poziciji,
+    pa finalna granica nije samo prost kvadratni raster.
+    """
+
+    top = np.asarray(
+        envelope.top,
+        dtype=np.float64,
+    )
+
+    bottom = np.asarray(
+        envelope.bottom,
+        dtype=np.float64,
+    )
+
+    pcb_mask = np.asarray(
+        envelope.pcb_mask,
+        dtype=bool,
+    )
+
+    if (
+        top.shape
+        !=
+        bottom.shape
+        or
+        top.shape
+        !=
+        pcb_mask.shape
+    ):
+        raise ValueError(
+            "Envelope arrays have incompatible shapes."
+        )
+
+    h, w = pcb_mask.shape
+
+    resolution = float(
+        envelope.resolution
+    )
+
+    #
+    # ========================================================
+    # PCB SIGNED DISTANCE
+    # ========================================================
+    #
+    # Positive = PCB
+    # Negative = outside
+    #
+
+    inside_distance = (
+        ndimage.distance_transform_edt(
+            pcb_mask
+        )
+        *
+        resolution
+    )
+
+    outside_distance = (
+        ndimage.distance_transform_edt(
+            ~pcb_mask
+        )
+        *
+        resolution
+    )
+
+    phi = (
+        inside_distance
+        -
+        outside_distance
+    ).astype(
+        np.float64
+    )
+
+    #
+    # ========================================================
+    # EXACT NPTH
+    # ========================================================
+    #
+    # Rupe se ne rasterizuju kao bool mask.
+    #
+    # Koristimo analitičko distance polje:
+    #
+    #     distance(center) - radius
+    #
+    # Positive = van rupe
+    # Negative = unutar rupe
+    #
+
+    if envelope.holes:
+
+        xs = (
+            envelope.min_x
+            +
+            np.arange(
+                w,
+                dtype=np.float64,
+            )
+            *
+            resolution
+        )
+
+        ys = (
+            envelope.min_y
+            +
+            np.arange(
+                h,
+                dtype=np.float64,
+            )
+            *
+            resolution
+        )
+
+        xx = xs[
+            None,
+            :
+        ]
+
+        yy = ys[
+            :,
+            None
+        ]
+
+        for hole in envelope.holes:
+
+            radius = (
+                float(
+                    hole.diameter
+                )
+                *
+                0.5
+            )
+
+            hole_phi = (
+                np.sqrt(
+                    (
+                        xx
+                        -
+                        float(
+                            hole.x
+                        )
+                    )
+                    ** 2
+                    +
+                    (
+                        yy
+                        -
+                        float(
+                            hole.y
+                        )
+                    )
+                    ** 2
+                )
+                -
+                radius
+            )
+
+            #
+            # Final solid:
+            #
+            #     PCB ∩ outside-hole
+            #
+
+            phi = np.minimum(
+                phi,
+                hole_phi,
+            )
+
+    #
+    # ========================================================
+    # MESH DATA
+    # ========================================================
+
+    vertices = []
+    faces = []
+
+    vertex_cache = {}
+
+    #
+    # ========================================================
+    # HEIGHT SAMPLING
+    # ========================================================
+
+    def sample_height(
+        data: np.ndarray,
+        gx: float,
+        gy: float,
+    ) -> float:
+
+        gx = float(
+            np.clip(
+                gx,
+                0.0,
+                w - 1.0,
+            )
+        )
+
+        gy = float(
+            np.clip(
+                gy,
+                0.0,
+                h - 1.0,
+            )
+        )
+
+        x0 = int(
+            np.floor(
+                gx
+            )
+        )
+
+        y0 = int(
+            np.floor(
+                gy
+            )
+        )
+
+        x1 = min(
+            x0 + 1,
+            w - 1,
+        )
+
+        y1 = min(
+            y0 + 1,
+            h - 1,
+        )
+
+        tx = (
+            gx
+            -
+            x0
+        )
+
+        ty = (
+            gy
+            -
+            y0
+        )
+
+        return float(
+            data[
+                y0,
+                x0
+            ]
+            *
+            (1.0 - tx)
+            *
+            (1.0 - ty)
+
+            +
+
+            data[
+                y0,
+                x1
+            ]
+            *
+            tx
+            *
+            (1.0 - ty)
+
+            +
+
+            data[
+                y1,
+                x0
+            ]
+            *
+            (1.0 - tx)
+            *
+            ty
+
+            +
+
+            data[
+                y1,
+                x1
+            ]
+            *
+            tx
+            *
+            ty
+        )
+
+    def get_vertex(
+        gx: float,
+        gy: float,
+        side: int,
+    ) -> int:
+
+        key = (
+            side,
+            round(
+                gx,
+                9,
+            ),
+            round(
+                gy,
+                9,
+            ),
+        )
+
+        if key in vertex_cache:
+            return vertex_cache[
+                key
+            ]
+
+        x = (
+            envelope.min_x
+            +
+            gx
+            *
+            resolution
+        )
+
+        y = (
+            envelope.min_y
+            +
+            gy
+            *
+            resolution
+        )
+
+        data = (
+            top
+            if side == 0
+            else bottom
+        )
+
+        z = sample_height(
+            data,
+            gx,
+            gy,
+        )
+
+        index = len(
+            vertices
+        )
+
+        vertices.append(
+            [
+                x,
+                y,
+                z,
+            ]
+        )
+
+        vertex_cache[
+            key
+        ] = index
+
+        return index
+
+    #
+    # ========================================================
+    # ZERO CROSSING
+    # ========================================================
+
+    def zero_cross(
+        p0,
+        v0,
+        p1,
+        v1,
+    ):
+
+        denominator = (
+            v0
+            -
+            v1
+        )
+
+        if abs(
+            denominator
+        ) < 1e-12:
+
+            t = 0.5
+
+        else:
+
+            t = (
+                v0
+                /
+                denominator
+            )
+
+        t = float(
+            np.clip(
+                t,
+                0.0,
+                1.0,
+            )
+        )
+
+        return (
+            p0[0]
+            +
+            (
+                p1[0]
+                -
+                p0[0]
+            )
+            *
+            t,
+
+            p0[1]
+            +
+            (
+                p1[1]
+                -
+                p0[1]
+            )
+            *
+            t,
+        )
+
+    #
+    # ========================================================
+    # CELL CLIPPING
+    # ========================================================
+
+    def clip_positive(
+        points,
+        values,
+    ):
+
+        output_points = []
+        output_values = []
+
+        count = len(
+            points
+        )
+
+        for i in range(
+            count
+        ):
+
+            current_p = points[
+                i
+            ]
+
+            current_v = values[
+                i
+            ]
+
+            previous_p = points[
+                i - 1
+            ]
+
+            previous_v = values[
+                i - 1
+            ]
+
+            current_inside = (
+                current_v
+                >=
+                0.0
+            )
+
+            previous_inside = (
+                previous_v
+                >=
+                0.0
+            )
+
+            if current_inside:
+
+                if not previous_inside:
+
+                    output_points.append(
+                        zero_cross(
+                            previous_p,
+                            previous_v,
+                            current_p,
+                            current_v,
+                        )
+                    )
+
+                    output_values.append(
+                        0.0
+                    )
+
+                output_points.append(
+                    current_p
+                )
+
+                output_values.append(
+                    current_v
+                )
+
+            elif previous_inside:
+
+                output_points.append(
+                    zero_cross(
+                        previous_p,
+                        previous_v,
+                        current_p,
+                        current_v,
+                    )
+                )
+
+                output_values.append(
+                    0.0
+                )
+
+        return (
+            output_points,
+            output_values,
+        )
+
+    #
+    # ========================================================
+    # BOUNDARY EDGE CACHE
+    # ========================================================
+
+    boundary_edges = {}
+
+    def edge_key(
+        a,
+        b,
+    ):
+
+        pa = (
+            round(
+                a[0],
+                9,
+            ),
+            round(
+                a[1],
+                9,
+            ),
+        )
+
+        pb = (
+            round(
+                b[0],
+                9,
+            ),
+            round(
+                b[1],
+                9,
+            ),
+        )
+
+        return tuple(
+            sorted(
+                (
+                    pa,
+                    pb,
+                )
+            )
+        )
+
+    active_cells = 0
+    boundary_cells = 0
+
+    #
+    # ========================================================
+    # GRID CELLS
+    # ========================================================
+
+    for y in range(
+        h - 1
+    ):
+
+        for x in range(
+            w - 1
+        ):
+
+            points = [
+                (
+                    float(
+                        x
+                    ),
+                    float(
+                        y
+                    ),
+                ),
+                (
+                    float(
+                        x + 1
+                    ),
+                    float(
+                        y
+                    ),
+                ),
+                (
+                    float(
+                        x + 1
+                    ),
+                    float(
+                        y + 1
+                    ),
+                ),
+                (
+                    float(
+                        x
+                    ),
+                    float(
+                        y + 1
+                    ),
+                ),
+            ]
+
+            values = [
+                float(
+                    phi[
+                        y,
+                        x
+                    ]
+                ),
+
+                float(
+                    phi[
+                        y,
+                        x + 1
+                    ]
+                ),
+
+                float(
+                    phi[
+                        y + 1,
+                        x + 1
+                    ]
+                ),
+
+                float(
+                    phi[
+                        y + 1,
+                        x
+                    ]
+                ),
+            ]
+
+            #
+            # Cela ćelija je van solid-a.
+            #
+
+            if max(
+                values
+            ) < 0.0:
+                continue
+
+            polygon, polygon_values = (
+                clip_positive(
+                    points,
+                    values,
+                )
+            )
+
+            if len(
+                polygon
+            ) < 3:
+                continue
+
+            active_cells += 1
+
+            if not all(
+                value > 0.0
+                for value in values
+            ):
+
+                boundary_cells += 1
+
+            top_indices = [
+                get_vertex(
+                    point[0],
+                    point[1],
+                    0,
+                )
+                for point in polygon
+            ]
+
+            bottom_indices = [
+                get_vertex(
+                    point[0],
+                    point[1],
+                    1,
+                )
+                for point in polygon
+            ]
+
+            #
+            # Clipped cell polygon je konveksan.
+            #
+
+            for i in range(
+                1,
+                len(
+                    polygon
+                )
+                -
+                1,
+            ):
+
+                faces.append(
+                    [
+                        top_indices[0],
+                        top_indices[i],
+                        top_indices[
+                            i + 1
+                        ],
+                    ]
+                )
+
+                faces.append(
+                    [
+                        bottom_indices[0],
+                        bottom_indices[
+                            i + 1
+                        ],
+                        bottom_indices[i],
+                    ]
+                )
+
+            #
+            # Segment sa oba endpoint-a na phi=0
+            # pripada finalnoj granici.
+            #
+
+            count = len(
+                polygon
+            )
+
+            for i in range(
+                count
+            ):
+
+                j = (
+                    i + 1
+                ) % count
+
+                if (
+                    abs(
+                        polygon_values[i]
+                    )
+                    <=
+                    1e-10
+                    and
+                    abs(
+                        polygon_values[j]
+                    )
+                    <=
+                    1e-10
+                ):
+
+                    a = polygon[i]
+                    b = polygon[j]
+
+                    boundary_edges[
+                        edge_key(
+                            a,
+                            b,
+                        )
+                    ] = (
+                        a,
+                        b,
+                    )
+
+    #
+    # ========================================================
+    # VERTICAL WALLS
+    # ========================================================
+
+    for a, b in boundary_edges.values():
+
+        ta = get_vertex(
+            a[0],
+            a[1],
+            0,
+        )
+
+        tb = get_vertex(
+            b[0],
+            b[1],
+            0,
+        )
+
+        ba = get_vertex(
+            a[0],
+            a[1],
+            1,
+        )
+
+        bb = get_vertex(
+            b[0],
+            b[1],
+            1,
+        )
+
+        faces.append(
+            [
+                ta,
+                ba,
+                bb,
+            ]
+        )
+
+        faces.append(
+            [
+                ta,
+                bb,
+                tb,
+            ]
+        )
+
+    if not vertices:
+        raise ValueError(
+            "Generated mesh contains no vertices."
+        )
+
+    if not faces:
+        raise ValueError(
+            "Generated mesh contains no faces."
+        )
+
+    mesh = trimesh.Trimesh(
+        vertices=np.asarray(
+            vertices,
+            dtype=np.float32,
+        ),
+
+        faces=np.asarray(
+            faces,
+            dtype=np.int64,
+        ),
+
+        process=False,
+    )
+
+    mesh.remove_unreferenced_vertices()
+
+    print(
+        "[mesh] "
+        f"resolution={resolution:.4f} mm | "
+        f"cells={active_cells:,} | "
+        f"boundary={boundary_cells:,} | "
+        f"{len(mesh.vertices):,} vertices | "
+        f"{len(mesh.faces):,} triangles"
+    )
+
+    return mesh
+
+
+
+
+================================================================================
+FILE: ./core/export.py
+================================================================================
+
+from pathlib import Path
+
+import trimesh
+
+
+SUPPORTED_EXPORTS = {
+    ".stl",
+    ".obj",
+    ".ply",
+    ".glb",
+}
+
+
+def export_mesh(
+    mesh: trimesh.Trimesh,
+    path: str | Path,
+):
+    path = Path(path)
+
+    extension = (
+        path.suffix.lower()
+    )
+
+    if extension not in SUPPORTED_EXPORTS:
+        raise ValueError(
+            f"Unsupported export format: {extension}"
+        )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    mesh.export(
+        path
+    )
+
+
+================================================================================
+FILE: ./core/heightmap.py
+================================================================================
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import trimesh
+from scipy import ndimage
+
+try:
+    from core import _native
+except ImportError:
+    _native = None
+
+
+# ============================================================
+# DATA
+# ============================================================
+
+
+@dataclass
+class HeightMap:
+    #
+    # First-hit projection.
+    #
+    raw_top: np.ndarray
+    raw_bottom: np.ndarray
+
+    #
+    # Detektovan rigidni PCB footprint.
+    #
+    pcb_mask: np.ndarray
+
+    #
+    # Grid.
+    #
+    min_x: float
+    min_y: float
+    resolution: float
+
+    #
+    # Detektovana PCB geometrija.
+    #
+    pcb_top_z: float
+    pcb_bottom_z: float
+    pcb_thickness: float
+
+
+# ============================================================
+# PUBLIC
+# ============================================================
+
+
+def generate_heightmap(
+    mesh: trimesh.Trimesh,
+    resolution: float,
+    analysis_padding_mm: float = 1.0,
+) -> HeightMap:
+    """
+    Projektuje assembly kao ortografske zrake:
+
+        TOP:
+            prvi hit gledano odozgo
+
+        BOTTOM:
+            prvi hit gledano odozdo
+
+    Zatim iz distribucije:
+
+        raw_top - raw_bottom
+
+    pronalazi dominantnu PCB debljinu.
+
+    PCB footprint se ne dobija iz bounding box-a.
+
+    PCB kandidat je XY kolona koja obuhvata obe
+    detektovane PCB ravni:
+
+        raw_top    >= pcb_top_z
+        raw_bottom <= pcb_bottom_z
+
+    Zatvorene rupe u tom footprint-u se popunjavaju.
+    Prazan prostor povezan sa spoljnim svetom ostaje prazan.
+
+    NPTH rupe se NAMERNO još ne primenjuju ovde.
+    To radi finalni mesh generator.
+    """
+
+    if resolution <= 0.0:
+        raise ValueError(
+            "Resolution must be > 0."
+        )
+
+    if analysis_padding_mm < 0.0:
+        raise ValueError(
+            "analysis_padding_mm must be >= 0."
+        )
+
+    mesh = _ensure_mesh(
+        mesh
+    )
+
+    bounds = np.asarray(
+        mesh.bounds,
+        dtype=np.float64,
+    )
+
+    model_min_x = float(
+        bounds[0, 0]
+    )
+
+    model_min_y = float(
+        bounds[0, 1]
+    )
+
+    model_max_x = float(
+        bounds[1, 0]
+    )
+
+    model_max_y = float(
+        bounds[1, 1]
+    )
+
+    #
+    # Padding postoji samo da bi topološka analiza
+    # sigurno imala "outside" region oko PCB-a.
+    #
+    min_x = (
+        model_min_x
+        -
+        analysis_padding_mm
+    )
+
+    min_y = (
+        model_min_y
+        -
+        analysis_padding_mm
+    )
+
+    max_x = (
+        model_max_x
+        +
+        analysis_padding_mm
+    )
+
+    max_y = (
+        model_max_y
+        +
+        analysis_padding_mm
+    )
+
+    width = max(
+        2,
+        int(
+            np.ceil(
+                (
+                    max_x
+                    -
+                    min_x
+                )
+                /
+                resolution
+            )
+        )
+        +
+        1,
+    )
+
+    height = max(
+        2,
+        int(
+            np.ceil(
+                (
+                    max_y
+                    -
+                    min_y
+                )
+                /
+                resolution
+            )
+        )
+        +
+        1,
+    )
+
+    #
+    # -inf znači da TOP ray još nije pogodio ništa.
+    # +inf znači da BOTTOM ray još nije pogodio ništa.
+    #
+    raw_top = np.full(
+        (height, width),
+        -np.inf,
+        dtype=np.float32,
+    )
+
+    raw_bottom = np.full(
+        (height, width),
+        np.inf,
+        dtype=np.float32,
+    )
+
+    _project_mesh(
+        mesh=mesh,
+        top=raw_top,
+        bottom=raw_bottom,
+        min_x=min_x,
+        min_y=min_y,
+        resolution=resolution,
+    )
+
+    top_hit = np.isfinite(
+        raw_top
+    )
+
+    bottom_hit = np.isfinite(
+        raw_bottom
+    )
+
+    hit_mask = (
+        top_hit
+        &
+        bottom_hit
+    )
+
+    if not np.any(
+        hit_mask
+    ):
+        raise ValueError(
+            "Projection did not hit the model."
+        )
+
+    #
+    # ========================================================
+    # DETECT PCB THICKNESS
+    # ========================================================
+    #
+
+    thickness_map = np.full(
+        raw_top.shape,
+        np.nan,
+        dtype=np.float32,
+    )
+
+    thickness_map[
+        hit_mask
+    ] = (
+        raw_top[
+            hit_mask
+        ]
+        -
+        raw_bottom[
+            hit_mask
+        ]
+    )
+
+    (
+        pcb_thickness,
+        thickness_tolerance,
+    ) = _detect_pcb_thickness(
+        thickness_map=thickness_map,
+        valid_mask=hit_mask,
+        resolution=resolution,
+    )
+
+    #
+    # Bare PCB samples imaju približno dominantnu
+    # detektovanu debljinu.
+    #
+    bare_pcb_samples = (
+        hit_mask
+        &
+        np.isfinite(
+            thickness_map
+        )
+        &
+        (
+            np.abs(
+                thickness_map
+                -
+                pcb_thickness
+            )
+            <=
+            thickness_tolerance
+        )
+    )
+
+    if np.count_nonzero(
+        bare_pcb_samples
+    ) < 16:
+        raise ValueError(
+            "Could not find enough bare PCB samples."
+        )
+
+    #
+    # Median je robustan na sitan STL/raster šum.
+    #
+    pcb_top_z = float(
+        np.median(
+            raw_top[
+                bare_pcb_samples
+            ]
+        )
+    )
+
+    pcb_bottom_z = float(
+        np.median(
+            raw_bottom[
+                bare_pcb_samples
+            ]
+        )
+    )
+
+    pcb_thickness = (
+        pcb_top_z
+        -
+        pcb_bottom_z
+    )
+
+    if pcb_thickness <= 0.0:
+        raise ValueError(
+            "Detected PCB thickness is invalid."
+        )
+
+    #
+    # ========================================================
+    # DETECT PCB FOOTPRINT
+    # ========================================================
+    #
+    # Ovo je ključ:
+    #
+    # PCB postoji tamo gde XY vertikalni segment modela
+    # prelazi kroz OBE PCB ravni.
+    #
+    # Komponenta koja viri preko edge-a obično NE obuhvata
+    # i pcb_top i pcb_bottom ravni, pa ne postaje deo PCB-a.
+    #
+    plane_tolerance = max(
+        0.05,
+        resolution * 1.5,
+        pcb_thickness * 0.04,
+    )
+
+    pcb_column_candidate = (
+        hit_mask
+        &
+        (
+            raw_top
+            >=
+            pcb_top_z
+            -
+            plane_tolerance
+        )
+        &
+        (
+            raw_bottom
+            <=
+            pcb_bottom_z
+            +
+            plane_tolerance
+        )
+    )
+
+    #
+    # Sačuvaj najveću povezanu PCB oblast.
+    #
+    pcb_connected = _largest_component(
+        pcb_column_candidate
+    )
+
+    if not np.any(
+        pcb_connected
+    ):
+        raise ValueError(
+            "Could not detect PCB footprint."
+        )
+
+    #
+    # ========================================================
+    # OUTSIDE-AIR FLOOD FILL
+    # ========================================================
+    #
+    # Ne pokušavamo da razlikujemo rupu od Edge.Cut-a
+    # prema veličini.
+    #
+    # Jedino pitanje je:
+    #
+    #     "Može li vazduh iz ove praznine da stigne
+    #      do ivice simulacionog prostora?"
+    #
+    # DA  -> outside / PCB edge / notch / otvoreni cut
+    #
+    # NE  -> zatvorena unutrašnja praznina
+    #        koju tretiramo kao solid PCB
+    #
+    air = ~pcb_connected
+
+    #
+    # Seed je samo vazduh na spoljašnjem border-u grida.
+    #
+    outside_seed = np.zeros_like(
+        air,
+        dtype=bool,
+    )
+
+    outside_seed[
+        0,
+        :
+    ] = air[
+        0,
+        :
+    ]
+
+    outside_seed[
+        -1,
+        :
+    ] = air[
+        -1,
+        :
+    ]
+
+    outside_seed[
+        :,
+        0
+    ] = air[
+        :,
+        0
+    ]
+
+    outside_seed[
+        :,
+        -1
+    ] = air[
+        :,
+        -1
+    ]
+
+    #
+    # Flood-fill može da propagira samo kroz AIR.
+    #
+    # 8-connectivity:
+    # i dijagonalni prolaz se računa kao put ka spolja.
+    #
+    connectivity = ndimage.generate_binary_structure(
+        2,
+        2,
+    )
+
+    outside_air = ndimage.binary_propagation(
+        outside_seed,
+        structure=connectivity,
+        mask=air,
+    )
+
+    #
+    # Vazduh do kog flood-fill NIJE mogao da stigne
+    # potpuno je zatvoren unutar PCB regiona.
+    #
+    enclosed_voids = (
+        air
+        &
+        ~outside_air
+    )
+
+    #
+    # Finalna rigidna PCB maska:
+    #
+    # potvrđen PCB
+    # +
+    # zatvorene unutrašnje praznine
+    #
+    # Sve što je povezano sa spoljnim vazduhom ostaje otvoreno.
+    #
+    pcb_mask = (
+        pcb_connected
+        |
+        enclosed_voids
+    )
+
+    print(
+        "[heightmap] topology | "
+        f"solid={np.count_nonzero(pcb_connected):,} | "
+        f"enclosed={np.count_nonzero(enclosed_voids):,} | "
+        f"outside={np.count_nonzero(outside_air):,}"
+    )
+
+    pcb_mask = np.asarray(
+        pcb_mask,
+        dtype=bool,
+    )
+
+    #
+    # NEMA bounding-box clipping-a.
+    #
+    # Analysis padding je već deo outside_air regiona,
+    # tako da flood-fill topologija sama određuje gde
+    # rigidni PCB prestaje.
+    #
+    # Time ne sečemo validan PCB edge prema STL bounds-u.
+    #
+
+    pcb_mask = np.asarray(
+        pcb_mask,
+        dtype=bool,
+    )
+
+    print(
+        "[heightmap] "
+        f"PCB thickness={pcb_thickness:.3f} mm | "
+        f"top={pcb_top_z:.3f} | "
+        f"bottom={pcb_bottom_z:.3f} | "
+        f"PCB pixels={np.count_nonzero(pcb_mask):,}"
+    )
+
+    return HeightMap(
+        raw_top=raw_top,
+        raw_bottom=raw_bottom,
+
+        pcb_mask=pcb_mask,
+
+        min_x=float(
+            min_x
+        ),
+
+        min_y=float(
+            min_y
+        ),
+
+        resolution=float(
+            resolution
+        ),
+
+        pcb_top_z=float(
+            pcb_top_z
+        ),
+
+        pcb_bottom_z=float(
+            pcb_bottom_z
+        ),
+
+        pcb_thickness=float(
+            pcb_thickness
+        ),
+
+    )
+
+
+# ============================================================
+# PCB DETECTION
+# ============================================================
+
+
+def _detect_pcb_thickness(
+    thickness_map: np.ndarray,
+    valid_mask: np.ndarray,
+    resolution: float,
+) -> tuple[
+    float,
+    float,
+]:
+    """
+    Pronalazi dominantni peak distribucije lokalne
+    top-bottom debljine.
+
+    PCB je tipično najveći skup XY tačaka sa veoma
+    sličnom malom debljinom.
+
+    Ne koristimo apsolutni minimum jer:
+      - pin
+      - tanki zid
+      - triangulation noise
+
+    mogu biti tanji od samog PCB-a.
+    """
+
+    values = np.asarray(
+        thickness_map[
+            valid_mask
+        ],
+        dtype=np.float64,
+    )
+
+    values = values[
+        np.isfinite(
+            values
+        )
+    ]
+
+    values = values[
+        values > 1e-4
+    ]
+
+    if len(
+        values
+    ) < 32:
+        raise ValueError(
+            "Not enough thickness samples."
+        )
+
+    #
+    # Ignorišemo ekstremno debele komponente.
+    #
+    upper = float(
+        np.quantile(
+            values,
+            0.70,
+        )
+    )
+
+    candidates = values[
+        values <= upper
+    ]
+
+    if len(
+        candidates
+    ) < 16:
+        candidates = values
+
+    #
+    # Bin treba da bude finiji od realne PCB tolerancije,
+    # ali ne previše fin u odnosu na raster.
+    #
+    bin_width = max(
+        0.02,
+        resolution * 0.20,
+    )
+
+    minimum = float(
+        np.min(
+            candidates
+        )
+    )
+
+    maximum = float(
+        np.max(
+            candidates
+        )
+    )
+
+    if maximum - minimum < bin_width:
+
+        peak = float(
+            np.median(
+                candidates
+            )
+        )
+
+    else:
+
+        bins = max(
+            8,
+            int(
+                np.ceil(
+                    (
+                        maximum
+                        -
+                        minimum
+                    )
+                    /
+                    bin_width
+                )
+            ),
+        )
+
+        histogram, edges = np.histogram(
+            candidates,
+            bins=bins,
+            range=(
+                minimum,
+                maximum,
+            ),
+        )
+
+        peak_index = int(
+            np.argmax(
+                histogram
+            )
+        )
+
+        low = edges[
+            peak_index
+        ]
+
+        high = edges[
+            peak_index + 1
+        ]
+
+        peak_values = candidates[
+            (
+                candidates
+                >=
+                low
+            )
+            &
+            (
+                candidates
+                <=
+                high
+            )
+        ]
+
+        if len(
+            peak_values
+        ):
+
+            peak = float(
+                np.median(
+                    peak_values
+                )
+            )
+
+        else:
+
+            peak = float(
+                (
+                    low
+                    +
+                    high
+                )
+                *
+                0.5
+            )
+
+    tolerance = max(
+        0.06,
+        resolution * 2.0,
+        peak * 0.06,
+    )
+
+    return (
+        peak,
+        tolerance,
+    )
+
+
+def _largest_component(
+    mask: np.ndarray,
+) -> np.ndarray:
+
+    labels, count = ndimage.label(
+        mask
+    )
+
+    if count <= 0:
+
+        return np.zeros_like(
+            mask,
+            dtype=bool,
+        )
+
+    sizes = ndimage.sum(
+        mask,
+        labels,
+        index=np.arange(
+            1,
+            count + 1,
+        ),
+    )
+
+    best = (
+        int(
+            np.argmax(
+                sizes
+            )
+        )
+        +
+        1
+    )
+
+    return (
+        labels
+        ==
+        best
+    )
+
+
+# ============================================================
+# PROJECTION
+# ============================================================
+
+
+def _project_mesh(
+    mesh: trimesh.Trimesh,
+    top: np.ndarray,
+    bottom: np.ndarray,
+    min_x: float,
+    min_y: float,
+    resolution: float,
+):
+    """
+    Native C++ projection.
+
+    Dok razvijamo native backend, Python implementacija
+    ostaje dostupna kao _project_mesh_python().
+    """
+
+    if _native is None:
+        print(
+            "[heightmap] native rasterizer unavailable; "
+            "using Python fallback"
+        )
+
+        return _project_mesh_python(
+            mesh=mesh,
+            top=top,
+            bottom=bottom,
+            min_x=min_x,
+            min_y=min_y,
+            resolution=resolution,
+        )
+
+    vertices = np.ascontiguousarray(
+        mesh.vertices,
+        dtype=np.float64,
+    )
+
+    faces = np.ascontiguousarray(
+        mesh.faces,
+        dtype=np.int64,
+    )
+
+    if (
+        top.dtype != np.float32
+        or
+        not top.flags.c_contiguous
+    ):
+        raise ValueError(
+            "top must be C-contiguous float32."
+        )
+
+    if (
+        bottom.dtype != np.float32
+        or
+        not bottom.flags.c_contiguous
+    ):
+        raise ValueError(
+            "bottom must be C-contiguous float32."
+        )
+
+    _native.project_mesh(
+        vertices,
+        faces,
+        top,
+        bottom,
+        float(min_x),
+        float(min_y),
+        float(resolution),
+    )
+
+
+def _project_mesh_python(
+    mesh: trimesh.Trimesh,
+    top: np.ndarray,
+    bottom: np.ndarray,
+    min_x: float,
+    min_y: float,
+    resolution: float,
+):
+    """
+    Softverski ortografski ray projection.
+
+    Rasterizujemo svaki triangle u XY.
+
+    Za svaki covered XY sample:
+
+        TOP    = najveći Z
+        BOTTOM = najmanji Z
+
+    To je ekvivalent prvom hit-u vertikalnog zraka
+    gledano odozgo / odozdo.
+    """
+
+    vertices = np.asarray(
+        mesh.vertices,
+        dtype=np.float64,
+    )
+
+    faces = np.asarray(
+        mesh.faces,
+        dtype=np.int64,
+    )
+
+    for face in faces:
+
+        tri = vertices[
+            face
+        ]
+
+        _rasterize_triangle(
+            tri=tri,
+            top=top,
+            bottom=bottom,
+            min_x=min_x,
+            min_y=min_y,
+            resolution=resolution,
+        )
+
+
+def _rasterize_triangle(
+    tri: np.ndarray,
+    top: np.ndarray,
+    bottom: np.ndarray,
+    min_x: float,
+    min_y: float,
+    resolution: float,
+):
+    """
+    XY barycentric rasterization.
+    """
+
+    p0, p1, p2 = tri
+
+    x0, y0, z0 = p0
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+
+    denominator = (
+        (y1 - y2)
+        *
+        (x0 - x2)
+        +
+        (x2 - x1)
+        *
+        (y0 - y2)
+    )
+
+    #
+    # Vertikalan triangle nema XY površinu.
+    #
+    if abs(
+        denominator
+    ) < 1e-12:
+        return
+
+    ix0 = max(
+        0,
+        int(
+            np.floor(
+                (
+                    min(
+                        x0,
+                        x1,
+                        x2,
+                    )
+                    -
+                    min_x
+                )
+                /
+                resolution
+            )
+        ),
+    )
+
+    ix1 = min(
+        top.shape[1] - 1,
+        int(
+            np.ceil(
+                (
+                    max(
+                        x0,
+                        x1,
+                        x2,
+                    )
+                    -
+                    min_x
+                )
+                /
+                resolution
+            )
+        ),
+    )
+
+    iy0 = max(
+        0,
+        int(
+            np.floor(
+                (
+                    min(
+                        y0,
+                        y1,
+                        y2,
+                    )
+                    -
+                    min_y
+                )
+                /
+                resolution
+            )
+        ),
+    )
+
+    iy1 = min(
+        top.shape[0] - 1,
+        int(
+            np.ceil(
+                (
+                    max(
+                        y0,
+                        y1,
+                        y2,
+                    )
+                    -
+                    min_y
+                )
+                /
+                resolution
+            )
+        ),
+    )
+
+    if (
+        ix0 > ix1
+        or
+        iy0 > iy1
+    ):
+        return
+
+    epsilon = -1e-7
+
+    for iy in range(
+        iy0,
+        iy1 + 1,
+    ):
+
+        y = (
+            min_y
+            +
+            iy
+            *
+            resolution
+        )
+
+        for ix in range(
+            ix0,
+            ix1 + 1,
+        ):
+
+            x = (
+                min_x
+                +
+                ix
+                *
+                resolution
+            )
+
+            a = (
+                (
+                    (y1 - y2)
+                    *
+                    (x - x2)
+                )
+                +
+                (
+                    (x2 - x1)
+                    *
+                    (y - y2)
+                )
+            ) / denominator
+
+            b = (
+                (
+                    (y2 - y0)
+                    *
+                    (x - x2)
+                )
+                +
+                (
+                    (x0 - x2)
+                    *
+                    (y - y2)
+                )
+            ) / denominator
+
+            c = (
+                1.0
+                -
+                a
+                -
+                b
+            )
+
+            if not (
+                a >= epsilon
+                and
+                b >= epsilon
+                and
+                c >= epsilon
+            ):
+                continue
+
+            z = (
+                a * z0
+                +
+                b * z1
+                +
+                c * z2
+            )
+
+            if z > top[
+                iy,
+                ix
+            ]:
+
+                top[
+                    iy,
+                    ix
+                ] = z
+
+            if z < bottom[
+                iy,
+                ix
+            ]:
+
+                bottom[
+                    iy,
+                    ix
+                ] = z
+
+
+# ============================================================
+# UTIL
+# ============================================================
+
+
+def _ensure_mesh(
+    mesh,
+) -> trimesh.Trimesh:
+
+    if isinstance(
+        mesh,
+        trimesh.Trimesh,
+    ):
+
+        return mesh
+
+    if isinstance(
+        mesh,
+        trimesh.Scene,
+    ):
+
+        geometries = [
+            geometry
+            for geometry
+            in mesh.geometry.values()
+            if isinstance(
+                geometry,
+                trimesh.Trimesh,
+            )
+        ]
+
+        if not geometries:
+            raise ValueError(
+                "Scene contains no triangle meshes."
+            )
+
+        return trimesh.util.concatenate(
+            geometries
+        )
+
+    raise TypeError(
+        f"Unsupported mesh type: {type(mesh)!r}"
+    )
+
+
+
+================================================================================
+FILE: ./core/loader.py
+================================================================================
+
+from pathlib import Path
+
+import numpy as np
+import trimesh
+
+
+SUPPORTED_EXTENSIONS = {
+    ".stl",
+    ".obj",
+    ".ply",
+    ".glb",
+    ".gltf",
+}
+
+
+class MeshLoadError(RuntimeError):
+    pass
+
+
+def load_mesh(path: str | Path) -> trimesh.Trimesh:
+    path = Path(path)
+
+    if not path.exists():
+        raise MeshLoadError(
+            f"File does not exist: {path}"
+        )
+
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise MeshLoadError(
+            f"Unsupported file format: {path.suffix}"
+        )
+
+    try:
+        loaded = trimesh.load(
+            path,
+            force="scene",
+        )
+    except Exception as exc:
+        raise MeshLoadError(
+            f"Could not load mesh:\n{exc}"
+        ) from exc
+
+    mesh = _scene_to_mesh(loaded)
+
+    if mesh.is_empty:
+        raise MeshLoadError(
+            "Loaded mesh is empty."
+        )
+
+    mesh.remove_unreferenced_vertices()
+
+    return mesh
+
+
+def _scene_to_mesh(
+    loaded,
+) -> trimesh.Trimesh:
+
+    if isinstance(loaded, trimesh.Trimesh):
+        return loaded.copy()
+
+    if not isinstance(loaded, trimesh.Scene):
+        raise MeshLoadError(
+            "Loaded object is not a triangle mesh."
+        )
+
+    meshes = []
+
+    #
+    # Scene može sadržati više komponenti.
+    #
+    # dump(concatenate=False) primenjuje transformacije
+    # scene graph-a, što je bitno kod GLB/GLTF fajlova.
+    #
+    try:
+        dumped = loaded.dump(
+            concatenate=False
+        )
+    except Exception:
+        dumped = list(
+            loaded.geometry.values()
+        )
+
+    for geometry in dumped:
+
+        if not isinstance(
+            geometry,
+            trimesh.Trimesh,
+        ):
+            continue
+
+        if geometry.is_empty:
+            continue
+
+        meshes.append(
+            geometry.copy()
+        )
+
+    if not meshes:
+        raise MeshLoadError(
+            "Scene does not contain any triangle meshes."
+        )
+
+    if len(meshes) == 1:
+        return meshes[0]
+
+    return trimesh.util.concatenate(
+        meshes
+    )
+
+
+def get_mesh_info(
+    mesh: trimesh.Trimesh,
+) -> dict:
+
+    bounds = np.asarray(
+        mesh.bounds,
+        dtype=np.float64,
+    )
+
+    size = bounds[1] - bounds[0]
+
+    return {
+        "vertices": len(mesh.vertices),
+        "triangles": len(mesh.faces),
+
+        "width": float(size[0]),
+        "depth": float(size[1]),
+        "height": float(size[2]),
+
+        "min": bounds[0].copy(),
+        "max": bounds[1].copy(),
+
+        "center": np.asarray(
+            mesh.bounding_box.centroid,
+            dtype=np.float64,
+        ),
+    }
+
+
+================================================================================
+FILE: ./main.py
+================================================================================
+
+import sys
+
+from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtWidgets import QApplication
+
+from ui.window import MainWindow
+
+
+def main():
+    fmt = QSurfaceFormat()
+
+    # macOS podržava maksimum OpenGL 4.1 Core.
+    fmt.setVersion(4, 1)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+
+    fmt.setDepthBufferSize(24)
+    fmt.setStencilBufferSize(8)
+    fmt.setSamples(4)
+
+    QSurfaceFormat.setDefaultFormat(fmt)
+
+    app = QApplication(sys.argv)
+
+    app.setApplicationName("ShrinkWrap")
+    app.setOrganizationName("ShrinkWrap")
+
+    window = MainWindow()
+    window.show()
+
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+================================================================================
+FILE: ./native/CMakeLists.txt
+================================================================================
+
+pybind11_add_module(
+    _native
+    MODULE
+
+    bindings.cpp
+    rasterizer.cpp
+    relief.cpp
+    regularizer.cpp
+    mesher.cpp
+    adaptive_mesher.cpp
+    qem_simplifier.cpp
+)
+
+target_include_directories(
+    _native
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_compile_options(
+    _native
+    PRIVATE
+
+    $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:
+        -O3
+        -Wall
+        -Wextra
+        -Wpedantic
+    >
+)
+
+#
+# Modul ide direktno u core/, tako da Python može:
+#
+#     from core import _native
+#
+set_target_properties(
+    _native
+    PROPERTIES
+
+    LIBRARY_OUTPUT_DIRECTORY
+        "${CMAKE_SOURCE_DIR}/core"
+)
+
+
+target_link_libraries(
+    _native
+    PRIVATE
+    CGAL::CGAL
+    Eigen3::Eigen
+)
+
+
+
+================================================================================
+FILE: ./pyproject.toml
+================================================================================
+
+[project]
+name = "shrinkwrap"
+version = "0.1.0"
+description = "PCB shrink-wrap height envelope generator"
+requires-python = ">=3.14,<3.15"
+
+dependencies = [
+    "numpy>=2.0",
+    "pyside6>=6.8",
+    "pyopengl>=3.1.7",
+    "trimesh>=4.4",
+    "scipy>=1.18.0",
+    "pyopengl-accelerate>=3.1.10",
+    "pyobjc-framework-cocoa>=12.2.2",
+    "pybind11>=3.1.0",
+    "psutil>=7.2.2",
+]
+
+[project.scripts]
+shrinkwrap = "main:main"
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.2",
+]
+
+
+
+================================================================================
+FILE: ./shaders/mesh.frag
+================================================================================
+
+#version 410 core
+
+in vec3 vWorldPosition;
+in vec3 vNormal;
+
+uniform vec3 uBaseColor;
+uniform vec3 uCameraPosition;
+
+out vec4 FragColor;
+
+
+void main()
+{
+    vec3 normal =
+        normalize(vNormal);
+
+    vec3 lightDirection =
+        normalize(
+            vec3(
+                -0.45,
+                -0.55,
+                -1.0
+            )
+        );
+
+    float diffuse =
+        max(
+            dot(
+                normal,
+                -lightDirection
+            ),
+            0.0
+        );
+
+    float ambient = 0.30;
+
+    //
+    // Malo "studio" osvetljenja
+    // da mesh ne bude potpuno crn
+    // sa suprotne strane.
+    //
+    vec3 secondaryLight =
+        normalize(
+            vec3(
+                0.6,
+                0.25,
+                -0.4
+            )
+        );
+
+    float secondary =
+        max(
+            dot(
+                normal,
+                -secondaryLight
+            ),
+            0.0
+        );
+
+    float lighting =
+        ambient +
+        diffuse * 0.60 +
+        secondary * 0.18;
+
+    vec3 color =
+        uBaseColor *
+        lighting;
+
+    //
+    // Jednostavan Fresnel highlight.
+    //
+    vec3 viewDirection =
+        normalize(
+            uCameraPosition -
+            vWorldPosition
+        );
+
+    float fresnel =
+        pow(
+            1.0 -
+            max(
+                dot(
+                    viewDirection,
+                    normal
+                ),
+                0.0
+            ),
+            3.0
+        );
+
+    color +=
+        fresnel *
+        vec3(0.08);
+
+    FragColor =
+        vec4(
+            color,
+            1.0
+        );
+}
+
+
+================================================================================
+FILE: ./shaders/mesh.vert
+================================================================================
+
+#version 410 core
+
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in vec3 aNormal;
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProjection;
+
+out vec3 vWorldPosition;
+out vec3 vNormal;
+
+void main()
+{
+    vec4 worldPosition =
+        uModel * vec4(aPosition, 1.0);
+
+    vWorldPosition =
+        worldPosition.xyz;
+
+    mat3 normalMatrix =
+        mat3(
+            transpose(
+                inverse(uModel)
+            )
+        );
+
+    vNormal =
+        normalize(
+            normalMatrix * aNormal
+        );
+
+    gl_Position =
+        uProjection *
+        uView *
+        worldPosition;
+}
+
+
+================================================================================
+FILE: ./ui/viewport.py
+================================================================================
+
+from __future__ import annotations
+
+import ctypes
+import math
+from pathlib import Path
+
+import numpy as np
+
+from OpenGL.GL import *
+
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtOpenGLWidgets import QOpenGLWidget
+
+from core.loader import load_mesh
+
+
+ROOT_DIR = Path(
+    __file__
+).resolve().parent.parent
+
+SHADER_DIR = (
+    ROOT_DIR / "shaders"
+)
+
+
+def normalize(
+    vector: np.ndarray,
+) -> np.ndarray:
+
+    length = np.linalg.norm(vector)
+
+    if length < 1e-9:
+        return vector
+
+    return vector / length
+
+
+def perspective(
+    fov_degrees: float,
+    aspect: float,
+    near: float,
+    far: float,
+) -> np.ndarray:
+
+    fov = math.radians(
+        fov_degrees
+    )
+
+    f = (
+        1.0 /
+        math.tan(
+            fov / 2.0
+        )
+    )
+
+    matrix = np.zeros(
+        (4, 4),
+        dtype=np.float32,
+    )
+
+    matrix[0, 0] = (
+        f / aspect
+    )
+
+    matrix[1, 1] = f
+
+    matrix[2, 2] = (
+        (far + near) /
+        (near - far)
+    )
+
+    matrix[2, 3] = (
+        (2.0 * far * near) /
+        (near - far)
+    )
+
+    matrix[3, 2] = -1.0
+
+    return matrix
+
+
+def look_at(
+    eye: np.ndarray,
+    target: np.ndarray,
+    up: np.ndarray,
+) -> np.ndarray:
+
+    forward = normalize(
+        target - eye
+    )
+
+    right = normalize(
+        np.cross(
+            forward,
+            up,
+        )
+    )
+
+    true_up = np.cross(
+        right,
+        forward,
+    )
+
+    matrix = np.eye(
+        4,
+        dtype=np.float32,
+    )
+
+    matrix[0, :3] = right
+    matrix[1, :3] = true_up
+    matrix[2, :3] = -forward
+
+    translation = np.eye(
+        4,
+        dtype=np.float32,
+    )
+
+    translation[:3, 3] = -eye
+
+    return matrix @ translation
+
+
+def load_shader_source(
+    name: str,
+) -> str:
+
+    path = (
+        SHADER_DIR /
+        name
+    )
+
+    return path.read_text(
+        encoding="utf-8"
+    )
+
+
+def compile_shader(
+    shader_type: int,
+    source: str,
+) -> int:
+
+    shader = glCreateShader(
+        shader_type
+    )
+
+    glShaderSource(
+        shader,
+        source,
+    )
+
+    glCompileShader(
+        shader
+    )
+
+    success = glGetShaderiv(
+        shader,
+        GL_COMPILE_STATUS,
+    )
+
+    if not success:
+
+        log = glGetShaderInfoLog(
+            shader
+        )
+
+        raise RuntimeError(
+            log.decode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+    return shader
+
+
+def create_program(
+    vertex_source: str,
+    fragment_source: str,
+) -> int:
+
+    vertex_shader = compile_shader(
+        GL_VERTEX_SHADER,
+        vertex_source,
+    )
+
+    fragment_shader = compile_shader(
+        GL_FRAGMENT_SHADER,
+        fragment_source,
+    )
+
+    program = glCreateProgram()
+
+    glAttachShader(
+        program,
+        vertex_shader,
+    )
+
+    glAttachShader(
+        program,
+        fragment_shader,
+    )
+
+    glLinkProgram(
+        program
+    )
+
+    success = glGetProgramiv(
+        program,
+        GL_LINK_STATUS,
+    )
+
+    if not success:
+
+        log = glGetProgramInfoLog(
+            program
+        )
+
+        raise RuntimeError(
+            log.decode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+    glDeleteShader(
+        vertex_shader
+    )
+
+    glDeleteShader(
+        fragment_shader
+    )
+
+    return program
+
+
+class Viewport(
+    QOpenGLWidget
+):
+
+    def __init__(
+        self,
+        parent=None,
+    ):
+        super().__init__(parent)
+
+        self.setFocusPolicy(
+            Qt.StrongFocus
+        )
+
+        self.setMouseTracking(
+            True
+        )
+
+        self.mesh = None
+
+        self.shader_program = 0
+
+        self.vao = 0
+        self.vbo = 0
+        self.ebo = 0
+
+        self.index_count = 0
+
+        #
+        # Kamera
+        #
+
+        self.camera_target = np.array(
+            [0.0, 0.0, 0.0],
+            dtype=np.float32,
+        )
+
+        self.camera_distance = 100.0
+
+        self.camera_yaw = 45.0
+        self.camera_pitch = 30.0
+
+        self.last_mouse_position = QPoint()
+
+        self.drag_button = None
+
+        self.wireframe = False
+
+    #
+    # OpenGL lifecycle
+    #
+
+    def initializeGL(self):
+
+        glEnable(
+            GL_DEPTH_TEST
+        )
+
+        glEnable(
+            GL_MULTISAMPLE
+        )
+
+        glClearColor(
+            0.045,
+            0.050,
+            0.060,
+            1.0,
+        )
+
+        vertex_source = (
+            load_shader_source(
+                "mesh.vert"
+            )
+        )
+
+        fragment_source = (
+            load_shader_source(
+                "mesh.frag"
+            )
+        )
+
+        self.shader_program = (
+            create_program(
+                vertex_source,
+                fragment_source,
+            )
+        )
+
+    def resizeGL(
+        self,
+        width: int,
+        height: int,
+    ):
+
+        ratio = (
+            self.devicePixelRatioF()
+        )
+
+        glViewport(
+            0,
+            0,
+            int(width * ratio),
+            int(height * ratio),
+        )
+
+    def paintGL(self):
+
+        glClear(
+            GL_COLOR_BUFFER_BIT |
+            GL_DEPTH_BUFFER_BIT
+        )
+
+        if (
+            self.mesh is None
+            or
+            self.index_count == 0
+        ):
+            return
+
+        glUseProgram(
+            self.shader_program
+        )
+
+        eye = (
+            self.camera_position()
+        )
+
+        view = look_at(
+            eye,
+            self.camera_target,
+            np.array(
+                [0.0, 0.0, 1.0],
+                dtype=np.float32,
+            ),
+        )
+
+        aspect = (
+            max(self.width(), 1) /
+            max(self.height(), 1)
+        )
+
+        projection = perspective(
+            45.0,
+            aspect,
+            0.01,
+            10000.0,
+        )
+
+        model = np.eye(
+            4,
+            dtype=np.float32,
+        )
+
+        self._set_matrix(
+            "uModel",
+            model,
+        )
+
+        self._set_matrix(
+            "uView",
+            view,
+        )
+
+        self._set_matrix(
+            "uProjection",
+            projection,
+        )
+
+        location = glGetUniformLocation(
+            self.shader_program,
+            "uBaseColor",
+        )
+
+        glUniform3f(
+            location,
+            0.22,
+            0.68,
+            0.42,
+        )
+
+        camera_location = (
+            glGetUniformLocation(
+                self.shader_program,
+                "uCameraPosition",
+            )
+        )
+
+        glUniform3f(
+            camera_location,
+            float(eye[0]),
+            float(eye[1]),
+            float(eye[2]),
+        )
+
+        if self.wireframe:
+            glPolygonMode(
+                GL_FRONT_AND_BACK,
+                GL_LINE,
+            )
+        else:
+            glPolygonMode(
+                GL_FRONT_AND_BACK,
+                GL_FILL,
+            )
+
+        glBindVertexArray(
+            self.vao
+        )
+
+        glDrawElements(
+            GL_TRIANGLES,
+            self.index_count,
+            GL_UNSIGNED_INT,
+            ctypes.c_void_p(0),
+        )
+
+        glBindVertexArray(0)
+
+        glPolygonMode(
+            GL_FRONT_AND_BACK,
+            GL_FILL,
+        )
+
+    #
+    # Mesh
+    #
+
+    def open_mesh(
+        self,
+        path: str,
+    ):
+
+        mesh = load_mesh(
+            path
+        )
+
+        self.mesh = mesh
+
+        self.makeCurrent()
+
+        self._upload_mesh(
+            mesh,
+            flat_shading=True,
+        )
+
+        self.doneCurrent()
+
+        self.focus_mesh()
+
+        self.update()
+
+        return mesh
+
+    def _upload_mesh(
+        self,
+        mesh,
+        flat_shading: bool = False,
+    ):
+
+        self._destroy_mesh_buffers()
+
+        if flat_shading:
+            #
+            # =================================================
+            # FLAT SHADING
+            # =================================================
+            #
+            # STL nema smooth-group semantiku.
+            #
+            # Svaki triangle dobija svoja 3 verteksa i
+            # jednu face normalu.
+            #
+            # Tako se normale NE prosečavaju preko oštrih
+            # ivica IC kućišta, PCB-a, konektora itd.
+            #
+
+            faces = np.asarray(
+                mesh.faces,
+                dtype=np.int64,
+            )
+
+            source_vertices = np.asarray(
+                mesh.vertices,
+                dtype=np.float32,
+            )
+
+            face_normals = np.asarray(
+                mesh.face_normals,
+                dtype=np.float32,
+            )
+
+            vertices = source_vertices[
+                faces.reshape(-1)
+            ]
+
+            normals = np.repeat(
+                face_normals,
+                3,
+                axis=0,
+            )
+
+            #
+            # Sada je svaki triangle nezavisan.
+            #
+            indices = np.arange(
+                len(vertices),
+                dtype=np.uint32,
+            ).reshape(
+                -1,
+                3,
+            )
+
+        else:
+            #
+            # =================================================
+            # SMOOTH SHADING
+            # =================================================
+            #
+            # Koristimo za generated wrap.
+            #
+
+            vertices = np.asarray(
+                mesh.vertices,
+                dtype=np.float32,
+            )
+
+            normals = np.asarray(
+                mesh.vertex_normals,
+                dtype=np.float32,
+            )
+
+            indices = np.asarray(
+                mesh.faces,
+                dtype=np.uint32,
+            )
+
+        #
+        # XYZ + normal XYZ
+        #
+
+        data = np.concatenate(
+            (
+                vertices,
+                normals,
+            ),
+            axis=1,
+        ).astype(
+            np.float32
+        )
+
+        self.vao = glGenVertexArrays(
+            1
+        )
+
+        self.vbo = glGenBuffers(
+            1
+        )
+
+        self.ebo = glGenBuffers(
+            1
+        )
+
+        glBindVertexArray(
+            self.vao
+        )
+
+        glBindBuffer(
+            GL_ARRAY_BUFFER,
+            self.vbo,
+        )
+
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            data.nbytes,
+            data,
+            GL_STATIC_DRAW,
+        )
+
+        glBindBuffer(
+            GL_ELEMENT_ARRAY_BUFFER,
+            self.ebo,
+        )
+
+        glBufferData(
+            GL_ELEMENT_ARRAY_BUFFER,
+            indices.nbytes,
+            indices,
+            GL_STATIC_DRAW,
+        )
+
+        stride = (
+            6 *
+            np.dtype(
+                np.float32
+            ).itemsize
+        )
+
+        #
+        # Position
+        #
+
+        glEnableVertexAttribArray(
+            0
+        )
+
+        glVertexAttribPointer(
+            0,
+            3,
+            GL_FLOAT,
+            GL_FALSE,
+            stride,
+            ctypes.c_void_p(0),
+        )
+
+        #
+        # Normal
+        #
+
+        glEnableVertexAttribArray(
+            1
+        )
+
+        glVertexAttribPointer(
+            1,
+            3,
+            GL_FLOAT,
+            GL_FALSE,
+            stride,
+            ctypes.c_void_p(
+                3 * 4
+            ),
+        )
+
+        glBindVertexArray(
+            0
+        )
+
+        self.index_count = int(
+            indices.size
+        )
+
+    def _destroy_mesh_buffers(
+        self,
+    ):
+
+        if self.ebo:
+            glDeleteBuffers(
+                1,
+                [self.ebo],
+            )
+
+        if self.vbo:
+            glDeleteBuffers(
+                1,
+                [self.vbo],
+            )
+
+        if self.vao:
+            glDeleteVertexArrays(
+                1,
+                [self.vao],
+            )
+
+        self.vao = 0
+        self.vbo = 0
+        self.ebo = 0
+
+        self.index_count = 0
+
+    #
+    # Camera
+    #
+
+    def camera_position(
+        self,
+    ) -> np.ndarray:
+
+        yaw = math.radians(
+            self.camera_yaw
+        )
+
+        pitch = math.radians(
+            self.camera_pitch
+        )
+
+        x = (
+            self.camera_distance *
+            math.cos(pitch) *
+            math.cos(yaw)
+        )
+
+        y = (
+            self.camera_distance *
+            math.cos(pitch) *
+            math.sin(yaw)
+        )
+
+        z = (
+            self.camera_distance *
+            math.sin(pitch)
+        )
+
+        return (
+            self.camera_target +
+            np.array(
+                [x, y, z],
+                dtype=np.float32,
+            )
+        )
+
+    def focus_mesh(
+        self,
+    ):
+
+        if self.mesh is None:
+            return
+
+        center = np.asarray(
+            self.mesh.bounding_box.centroid,
+            dtype=np.float32,
+        )
+
+        extents = np.asarray(
+            self.mesh.bounding_box.extents,
+            dtype=np.float32,
+        )
+
+        size = max(
+            float(
+                np.max(extents)
+            ),
+            1.0,
+        )
+
+        self.camera_target = center
+
+        self.camera_distance = (
+            size * 2.2
+        )
+
+        self.camera_yaw = 45.0
+        self.camera_pitch = 30.0
+
+        self.update()
+
+    #
+    # UI controls
+    #
+
+    def set_wireframe(
+        self,
+        enabled: bool,
+    ):
+
+        self.wireframe = enabled
+        self.update()
+
+    #
+    # Mouse
+    #
+
+    def mousePressEvent(
+        self,
+        event,
+    ):
+
+        self.last_mouse_position = (
+            event.position().toPoint()
+        )
+
+        self.drag_button = (
+            event.button()
+        )
+
+    def mouseReleaseEvent(
+        self,
+        event,
+    ):
+
+        self.drag_button = None
+
+    def mouseMoveEvent(
+        self,
+        event,
+    ):
+
+        current = (
+            event.position().toPoint()
+        )
+
+        delta = (
+            current -
+            self.last_mouse_position
+        )
+
+        self.last_mouse_position = (
+            current
+        )
+
+        if (
+            self.drag_button ==
+            Qt.LeftButton
+        ):
+
+            self.camera_yaw += (
+                delta.x() *
+                0.45
+            )
+
+            self.camera_pitch += (
+                delta.y() *
+                0.45
+            )
+
+            self.camera_pitch = max(
+                -89.0,
+                min(
+                    89.0,
+                    self.camera_pitch,
+                ),
+            )
+
+            self.update()
+
+        elif self.drag_button in (
+            Qt.RightButton,
+            Qt.MiddleButton,
+        ):
+
+            self._pan_camera(
+                delta.x(),
+                delta.y(),
+            )
+
+    def _pan_camera(
+        self,
+        dx: float,
+        dy: float,
+    ):
+
+        eye = (
+            self.camera_position()
+        )
+
+        forward = normalize(
+            self.camera_target -
+            eye
+        )
+
+        world_up = np.array(
+            [0.0, 0.0, 1.0],
+            dtype=np.float32,
+        )
+
+        right = normalize(
+            np.cross(
+                forward,
+                world_up,
+            )
+        )
+
+        up = normalize(
+            np.cross(
+                right,
+                forward,
+            )
+        )
+
+        scale = (
+            self.camera_distance *
+            0.0015
+        )
+
+        self.camera_target -= (
+            right *
+            dx *
+            scale
+        )
+
+        self.camera_target += (
+            up *
+            dy *
+            scale
+        )
+
+        self.update()
+
+    def wheelEvent(
+        self,
+        event,
+    ):
+
+        steps = (
+            event.angleDelta().y() /
+            120.0
+        )
+
+        self.camera_distance *= (
+            0.87 ** steps
+        )
+
+        self.camera_distance = max(
+            self.camera_distance,
+            0.01,
+        )
+
+        self.update()
+
+    #
+    # Uniform helpers
+    #
+
+    def _set_matrix(
+        self,
+        name: str,
+        matrix: np.ndarray,
+    ):
+
+        location = (
+            glGetUniformLocation(
+                self.shader_program,
+                name,
+            )
+        )
+
+        #
+        # numpy koristi row-major,
+        # pa GL_TRUE radi transpose.
+        #
+
+        glUniformMatrix4fv(
+            location,
+            1,
+            GL_TRUE,
+            matrix,
+        )
+
+    def show_generated_mesh(
+        self,
+        mesh,
+    ):
+
+        self.makeCurrent()
+
+        self._upload_mesh(
+            mesh,
+            flat_shading=False,
+        )
+
+        self.doneCurrent()
+
+        self.update()
+
+    def show_original_mesh(
+        self,
+    ):
+        if self.mesh is None:
+            return
+
+        self.makeCurrent()
+
+        self._upload_mesh(
+            self.mesh,
+            flat_shading=True,
+        )
+
+        self.doneCurrent()
+
+        self.update()
+
+
+================================================================================
+FILE: ./ui/window.py
+================================================================================
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+
+from PySide6.QtGui import (
+    QColor,
+    QLinearGradient,
+    QPainter,
+)
+
+
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.loader import (
+    MeshLoadError,
+    get_mesh_info,
+)
+
+from core.heightmap import (
+    generate_heightmap,
+)
+
+from core.envelope import (
+    build_envelope,
+    envelope_to_mesh,
+)
+
+from core.drill import (
+    drill_center,
+    load_excellon,
+    transform_drills,
+)
+
+from core.export import (
+    export_mesh,
+)
+
+from ui.viewport import Viewport
+
+
+class ViewportFadeOverlay(QWidget):
+
+    WIDTH = 140
+
+    def __init__(
+        self,
+        parent=None,
+    ):
+        super().__init__(
+            parent
+        )
+
+        self.setAttribute(
+            Qt.WA_TransparentForMouseEvents,
+            True,
+        )
+
+        self.setAttribute(
+            Qt.WA_TranslucentBackground,
+            True,
+        )
+
+    def paintEvent(
+        self,
+        event,
+    ):
+        painter = QPainter(
+            self
+        )
+
+        #
+        # LEFT FADE
+        #
+        left_gradient = QLinearGradient(
+            0.0,
+            0.0,
+            float(
+                self.width()
+            ),
+            0.0,
+        )
+
+        left_gradient.setColorAt(
+            0.00,
+            QColor(
+                17,
+                18,
+                20,
+                255,
+            ),
+        )
+
+        left_gradient.setColorAt(
+            0.12,
+            QColor(
+                17,
+                18,
+                20,
+                235,
+            ),
+        )
+
+        left_gradient.setColorAt(
+            0.32,
+            QColor(
+                17,
+                18,
+                20,
+                170,
+            ),
+        )
+
+        left_gradient.setColorAt(
+            0.58,
+            QColor(
+                17,
+                18,
+                20,
+                85,
+            ),
+        )
+
+        left_gradient.setColorAt(
+            0.82,
+            QColor(
+                17,
+                18,
+                20,
+                25,
+            ),
+        )
+
+        left_gradient.setColorAt(
+            1.00,
+            QColor(
+                17,
+                18,
+                20,
+                0,
+            ),
+        )
+
+        painter.fillRect(
+            self.rect(),
+            left_gradient,
+        )
+
+        #
+        # TOP FADE
+        #
+        top_height = 110.0
+
+        top_gradient = QLinearGradient(
+            0.0,
+            0.0,
+            0.0,
+            top_height,
+        )
+
+        top_gradient.setColorAt(
+            0.00,
+            QColor(
+                17,
+                18,
+                20,
+                225,
+            ),
+        )
+
+        top_gradient.setColorAt(
+            0.18,
+            QColor(
+                17,
+                18,
+                20,
+                185,
+            ),
+        )
+
+        top_gradient.setColorAt(
+            0.42,
+            QColor(
+                17,
+                18,
+                20,
+                110,
+            ),
+        )
+
+        top_gradient.setColorAt(
+            0.72,
+            QColor(
+                17,
+                18,
+                20,
+                35,
+            ),
+        )
+
+        top_gradient.setColorAt(
+            1.00,
+            QColor(
+                17,
+                18,
+                20,
+                0,
+            ),
+        )
+
+        painter.fillRect(
+            0,
+            0,
+            self.width(),
+            int(
+                top_height
+            ),
+            top_gradient,
+        )
+
+
+class MainWindow(QMainWindow):
+
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowTitle(
+            "ShrinkWrap"
+        )
+
+        self.resize(
+            1450,
+            900,
+        )
+
+        self.viewport = Viewport()
+
+        self.generated_mesh = None
+
+        self.npth_path = None
+
+        self._build_ui()
+
+        self._configure_macos_window()
+
+        self.viewport_fade.raise_()
+
+        self.statusBar().showMessage(
+            "Ready"
+        )
+
+    def _configure_macos_window(
+        self,
+    ):
+        """
+        Native macOS window:
+
+        - native rounded corners
+        - native traffic lights
+        - hidden title
+        - transparent titlebar
+        - content extends underneath titlebar
+        """
+
+        import sys
+
+        if sys.platform != "darwin":
+            return
+
+        #
+        # Qt native handle mora već da postoji.
+        #
+        self.winId()
+
+        try:
+            from ctypes import c_void_p
+            import objc
+            from AppKit import (
+                NSWindowStyleMaskFullSizeContentView,
+                NSWindowTitleHidden,
+            )
+
+            view = objc.objc_object(
+                c_void_p=int(
+                    self.winId()
+                )
+            )
+
+            window = view.window()
+
+            if window is None:
+                return
+
+            window.setTitleVisibility_(
+                NSWindowTitleHidden
+            )
+
+            window.setTitlebarAppearsTransparent_(
+                True
+            )
+
+
+            window.setStyleMask_(
+                window.styleMask()
+                |
+                NSWindowStyleMaskFullSizeContentView
+            )
+
+            window.setMovableByWindowBackground_(
+                True
+            )
+
+        except Exception as exc:
+
+            print(
+                "[window] native macOS chrome unavailable:",
+                exc,
+            )
+
+    def mousePressEvent(
+        self,
+        event,
+    ):
+        """
+        Native macOS titlebar drag area.
+
+        Content ide ispod transparentnog titlebara, pa eksplicitno
+        kažemo Qt-u da drag u gornjoj zoni pokrene system window move.
+        """
+
+        if (
+            event.button()
+            ==
+            Qt.LeftButton
+            and
+            event.position().y()
+            <=
+            52
+        ):
+            handle = self.windowHandle()
+
+            if (
+                handle is not None
+                and
+                handle.startSystemMove()
+            ):
+                event.accept()
+                return
+
+        super().mousePressEvent(
+            event
+        )
+
+    def _build_ui(self):
+
+        root = QWidget()
+
+        root.setObjectName(
+            "windowRoot"
+        )
+
+        self.setCentralWidget(
+            root
+        )
+
+        layout = QHBoxLayout(
+            root
+        )
+
+        layout.setContentsMargins(
+            0, 0, 0, 0
+        )
+
+        layout.setSpacing(
+            0
+        )
+
+        sidebar = self._create_sidebar()
+
+        scroll = QScrollArea()
+        scroll.setWidget(sidebar)
+        scroll.setWidgetResizable(True)
+
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
+
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+
+        scroll.setFixedWidth(340)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        scroll.setStyleSheet(
+            """
+            QScrollArea {
+                background: #111214;
+                border: none;
+            }
+
+            QScrollBar:vertical {
+                background: transparent;
+                width: 7px;
+                margin: 4px 1px 4px 0px;
+            }
+
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 45);
+                min-height: 32px;
+                border-radius: 3px;
+            }
+
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 75);
+            }
+
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+            """
+        )
+
+        layout.addWidget(scroll)
+
+        layout.addWidget(
+            self.viewport,
+            1,
+        )
+
+        self.viewport_fade = ViewportFadeOverlay(
+            root
+        )
+
+        self.viewport_fade.raise_()
+
+    def resizeEvent(
+        self,
+        event,
+    ):
+
+        super().resizeEvent(
+            event
+        )
+
+        if not hasattr(
+            self,
+            "viewport_fade",
+        ):
+            return
+
+        central = (
+            self.centralWidget()
+        )
+
+        if central is None:
+            return
+
+        viewport_pos = (
+            self.viewport.mapTo(
+                central,
+                self.viewport.rect().topLeft(),
+            )
+        )
+
+        self.viewport_fade.setGeometry(
+            viewport_pos.x(),
+            viewport_pos.y(),
+            ViewportFadeOverlay.WIDTH,
+            self.viewport.height(),
+        )
+
+        self.viewport_fade.raise_()
+
+    def _create_sidebar(self):
+
+        sidebar = QFrame()
+
+        sidebar.setMinimumWidth(
+            320
+        )
+
+        sidebar.setObjectName(
+            "sidebar"
+        )
+
+        layout = QVBoxLayout(
+            sidebar
+        )
+
+        #
+        # Top margin ostavlja prostor custom titlebaru.
+        #
+        layout.setContentsMargins(
+            18,
+            58,
+            18,
+            18,
+        )
+
+        layout.setSpacing(
+            14
+        )
+
+        # =====================================================
+        # HEADER
+        # =====================================================
+
+        title = QLabel(
+            "SHRINKWRAP"
+        )
+
+        title.setObjectName(
+            "title"
+        )
+
+        subtitle = QLabel(
+            "PCB envelope + Excellon drilling"
+        )
+
+        subtitle.setObjectName(
+            "subtitle"
+        )
+
+        layout.addWidget(
+            title
+        )
+
+        layout.addWidget(
+            subtitle
+        )
+
+        # =====================================================
+        # MODEL
+        # =====================================================
+
+        model_group = QGroupBox(
+            "3D Model"
+        )
+
+        model_layout = QVBoxLayout(
+            model_group
+        )
+
+        self.model_label = QLabel(
+            "No model loaded"
+        )
+
+        self.model_label.setWordWrap(
+            True
+        )
+
+        open_model_button = QPushButton(
+            "Open model..."
+        )
+
+        open_model_button.clicked.connect(
+            self.open_model
+        )
+
+        focus_button = QPushButton(
+            "Focus model"
+        )
+
+        focus_button.clicked.connect(
+            self.viewport.focus_mesh
+        )
+
+        model_layout.addWidget(
+            self.model_label
+        )
+
+        model_layout.addWidget(
+            open_model_button
+        )
+
+        model_layout.addWidget(
+            focus_button
+        )
+
+        layout.addWidget(
+            model_group
+        )
+
+        # =====================================================
+        # DRILL FILES
+        # =====================================================
+
+        drill_group = QGroupBox(
+            "Drill Data"
+        )
+
+        drill_layout = QVBoxLayout(
+            drill_group
+        )
+
+        self.npth_label = QLabel(
+            "NPTH: not loaded"
+        )
+
+        self.npth_label.setWordWrap(
+            True
+        )
+
+        npth_button = QPushButton(
+            "Load NPTH.drl..."
+        )
+
+        npth_button.clicked.connect(
+            self.open_npth
+        )
+
+        drill_layout.addWidget(
+            self.npth_label
+        )
+
+        drill_layout.addWidget(
+            npth_button
+        )
+
+        layout.addWidget(
+            drill_group
+        )
+
+        # =====================================================
+        # DRILL SETTINGS
+        # =====================================================
+
+        drill_settings = QGroupBox(
+            "Drill Settings"
+        )
+
+        drill_form = QFormLayout(
+            drill_settings
+        )
+
+        self.drill_offset_x = (
+            QDoubleSpinBox()
+        )
+
+        self.drill_offset_x.setRange(
+            -1000.0,
+            1000.0,
+        )
+
+        self.drill_offset_x.setDecimals(
+            3
+        )
+
+        self.drill_offset_x.setSuffix(
+            " mm"
+        )
+
+        self.drill_offset_y = (
+            QDoubleSpinBox()
+        )
+
+        self.drill_offset_y.setRange(
+            -1000.0,
+            1000.0,
+        )
+
+        self.drill_offset_y.setDecimals(
+            3
+        )
+
+        self.drill_offset_y.setSuffix(
+            " mm"
+        )
+
+        self.flip_x_checkbox = (
+            QCheckBox(
+                "Flip X"
+            )
+        )
+
+        self.flip_y_checkbox = (
+            QCheckBox(
+                "Flip Y"
+            )
+        )
+
+        auto_center_button = QPushButton(
+            "Auto-center drill coordinates"
+        )
+
+        auto_center_button.clicked.connect(
+            self.auto_center_drills
+        )
+
+        self.hole_keepout_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.hole_keepout_spin.setRange(
+            0.0,
+            20.0,
+        )
+
+        self.hole_keepout_spin.setDecimals(
+            2
+        )
+
+        self.hole_keepout_spin.setValue(
+            2.0
+        )
+
+        self.hole_keepout_spin.setSingleStep(
+            0.25
+        )
+
+        self.hole_keepout_spin.setSuffix(
+            " mm"
+        )
+
+        drill_form.addRow(
+            "Wrap keepout",
+            self.hole_keepout_spin,
+        )
+
+
+        drill_form.addRow(
+            "X offset",
+            self.drill_offset_x,
+        )
+
+        drill_form.addRow(
+            "Y offset",
+            self.drill_offset_y,
+        )
+
+        drill_form.addRow(
+            self.flip_x_checkbox
+        )
+
+        drill_form.addRow(
+            self.flip_y_checkbox
+        )
+
+        drill_form.addRow(
+            auto_center_button
+        )
+
+        layout.addWidget(
+            drill_settings
+        )
+
+        # =====================================================
+        # ENVELOPE
+        # =====================================================
+
+        envelope_group = QGroupBox(
+            "Envelope"
+        )
+
+        form = QFormLayout(
+            envelope_group
+        )
+
+        self.resolution_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.resolution_spin.setRange(
+            0.01,
+            5.0,
+        )
+
+        self.resolution_spin.setValue(
+            0.20
+        )
+
+        self.resolution_spin.setSingleStep(
+            0.01
+        )
+
+        self.resolution_spin.setSuffix(
+            " mm"
+        )
+
+        self.surface_tolerance_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.surface_tolerance_spin.setDecimals(
+            3
+        )
+
+        self.surface_tolerance_spin.setRange(
+            0.001,
+            0.100,
+        )
+
+        self.surface_tolerance_spin.setValue(
+            0.010
+        )
+
+        self.surface_tolerance_spin.setSingleStep(
+            0.001
+        )
+
+        self.surface_tolerance_spin.setSuffix(
+            " mm"
+        )
+
+        self.surface_tolerance_spin.setToolTip(
+            "Maximum allowed adaptive surface approximation error. "
+            "Lower values preserve more detail but generate more triangles."
+        )
+
+        self.bridge_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.bridge_spin.setRange(
+            0.0,
+            50.0,
+        )
+
+        self.bridge_spin.setValue(
+            4.0
+        )
+
+        self.bridge_spin.setSingleStep(
+            0.5
+        )
+
+        self.bridge_spin.setSuffix(
+            " mm"
+        )
+
+        self.slope_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.slope_spin.setRange(
+            5.0,
+            88.0,
+        )
+
+        self.slope_spin.setValue(
+            55.0
+        )
+
+        self.slope_spin.setSingleStep(
+            5.0
+        )
+
+        self.slope_spin.setSuffix(
+            "°"
+        )
+
+        self.smoothing_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.smoothing_spin.setRange(
+            0.0,
+            20.0,
+        )
+
+        self.smoothing_spin.setValue(
+            0.40
+        )
+
+        self.smoothing_spin.setSingleStep(
+            0.10
+        )
+
+        self.smoothing_spin.setSuffix(
+            " mm"
+        )
+
+        self.clearance_spin = (
+            QDoubleSpinBox()
+        )
+
+        self.clearance_spin.setRange(
+            0.0,
+            20.0,
+        )
+
+        self.clearance_spin.setValue(
+            0.0
+        )
+
+        self.clearance_spin.setSingleStep(
+            0.10
+        )
+
+        self.clearance_spin.setSuffix(
+            " mm"
+        )
+
+        form.addRow(
+            "Simulation resolution",
+            self.resolution_spin,
+        )
+
+        form.addRow(
+            "Surface tolerance",
+            self.surface_tolerance_spin,
+        )
+
+        form.addRow(
+            "Bridge gaps",
+            self.bridge_spin,
+        )
+
+        form.addRow(
+            "Cloth slope",
+            self.slope_spin,
+        )
+
+        form.addRow(
+            "Smoothing",
+            self.smoothing_spin,
+        )
+
+
+        form.addRow(
+            "Clearance",
+            self.clearance_spin,
+        )
+
+        layout.addWidget(
+            envelope_group
+        )
+
+        # =====================================================
+        # DISPLAY
+        # =====================================================
+
+        display_group = QGroupBox(
+            "Display"
+        )
+
+        display_layout = QVBoxLayout(
+            display_group
+        )
+
+        self.wireframe_checkbox = (
+            QCheckBox(
+                "Wireframe"
+            )
+        )
+
+        self.wireframe_checkbox.toggled.connect(
+            self.viewport.set_wireframe
+        )
+
+        show_original = QPushButton(
+            "Show original"
+        )
+
+        show_original.clicked.connect(
+            self.show_original
+        )
+
+        self.show_wrap_button = QPushButton(
+            "Show wrap"
+        )
+
+        self.show_wrap_button.setEnabled(
+            False
+        )
+
+        self.show_wrap_button.clicked.connect(
+            self.show_wrap
+        )
+
+        display_layout.addWidget(
+            self.wireframe_checkbox
+        )
+
+        display_layout.addWidget(
+            show_original
+        )
+
+        display_layout.addWidget(
+            self.show_wrap_button
+        )
+
+        layout.addWidget(
+            display_group
+        )
+
+        # =====================================================
+        # GENERATE / EXPORT
+        # =====================================================
+
+        self.generate_button = QPushButton(
+            "Generate Wrap"
+        )
+
+        self.generate_button.setObjectName(
+            "primaryButton"
+        )
+
+        self.generate_button.setMinimumHeight(
+            44
+        )
+
+        self.generate_button.clicked.connect(
+            self.generate_wrap
+        )
+
+        self.export_button = QPushButton(
+            "Export STL"
+        )
+
+        self.export_button.setEnabled(
+            False
+        )
+
+        self.export_button.clicked.connect(
+            self.export_generated
+        )
+
+        layout.addWidget(
+            self.generate_button
+        )
+
+        layout.addWidget(
+            self.export_button
+        )
+
+        layout.addStretch()
+
+        self._apply_style(
+            sidebar
+        )
+
+        return sidebar
+
+    # =========================================================
+    # FILES
+    # =========================================================
+
+    def open_model(self):
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open PCB model",
+            "",
+            (
+                "3D Mesh "
+                "(*.stl *.obj *.ply *.glb *.gltf);;"
+                "All files (*)"
+            ),
+        )
+
+        if not path:
+            return
+
+        try:
+
+            mesh = self.viewport.open_mesh(
+                path
+            )
+
+        except MeshLoadError as exc:
+
+            self.statusBar().showMessage(
+                str(exc)
+            )
+
+            return
+
+        self.generated_mesh = None
+
+        self.export_button.setEnabled(
+            False
+        )
+
+        self.show_wrap_button.setEnabled(
+            False
+        )
+
+        info = get_mesh_info(
+            mesh
+        )
+
+        self.model_label.setText(
+            Path(path).name
+        )
+
+        self.statusBar().showMessage(
+            (
+                f"{Path(path).name} | "
+                f"{info['width']:.2f} × "
+                f"{info['depth']:.2f} × "
+                f"{info['height']:.2f} mm | "
+                f"{info['triangles']:,} triangles"
+            )
+        )
+
+    def open_npth(self):
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open NPTH drill file",
+            "",
+            "Excellon Drill (*.drl *.xln *.txt);;All files (*)",
+        )
+
+        if not path:
+            return
+
+        try:
+
+            holes = load_excellon(
+                path,
+                plated=False,
+            )
+
+        except Exception as exc:
+
+            self.statusBar().showMessage(
+                f"NPTH error: {exc}"
+            )
+
+            raise
+
+        self.npth_path = path
+
+        self.npth_label.setText(
+            (
+                f"NPTH: {Path(path).name}\n"
+                f"{len(holes)} drill positions"
+            )
+        )
+
+    # =========================================================
+    # DRILLS
+    # =========================================================
+
+    def _raw_selected_drills(self):
+        """
+        ShrinkWrap koristi SAMO NPTH.
+
+        PTH/vias/THT drill rupe namerno ignorišemo:
+        rigid PCB reconstruction ih automatski popunjava.
+        """
+
+        if not self.npth_path:
+            return []
+
+        holes = load_excellon(
+            self.npth_path,
+            plated=False,
+        )
+
+        return holes
+
+    def _transformed_drills(self):
+
+        holes = (
+            self._raw_selected_drills()
+        )
+
+        if not holes:
+            return []
+
+        center = drill_center(
+            holes
+        )
+
+        if center is None:
+            center_x = 0.0
+            center_y = 0.0
+        else:
+            center_x, center_y = (
+                center
+            )
+
+        return transform_drills(
+            holes,
+
+            offset_x=(
+                self.drill_offset_x.value()
+            ),
+
+            offset_y=(
+                self.drill_offset_y.value()
+            ),
+
+            flip_x=(
+                self.flip_x_checkbox.isChecked()
+            ),
+
+            flip_y=(
+                self.flip_y_checkbox.isChecked()
+            ),
+
+            center_x=center_x,
+            center_y=center_y,
+        )
+
+    def auto_center_drills(self):
+
+        if self.viewport.mesh is None:
+
+            self.statusBar().showMessage(
+                "Load the 3D model first."
+            )
+
+            return
+
+        holes = (
+            self._raw_selected_drills()
+        )
+
+        if not holes:
+
+            self.statusBar().showMessage(
+                "No enabled drill data."
+            )
+
+            return
+
+        drill_mid = drill_center(
+            holes
+        )
+
+        if drill_mid is None:
+            return
+
+        mesh_bounds = (
+            self.viewport.mesh.bounds
+        )
+
+        model_center_x = (
+            mesh_bounds[0][0]
+            +
+            mesh_bounds[1][0]
+        ) * 0.5
+
+        model_center_y = (
+            mesh_bounds[0][1]
+            +
+            mesh_bounds[1][1]
+        ) * 0.5
+
+        drill_center_x, drill_center_y = (
+            drill_mid
+        )
+
+        self.drill_offset_x.setValue(
+            model_center_x
+            -
+            drill_center_x
+        )
+
+        self.drill_offset_y.setValue(
+            model_center_y
+            -
+            drill_center_y
+        )
+
+        self.statusBar().showMessage(
+            (
+                "Drill coordinates centered. "
+                "Fine-tune X/Y offsets if necessary."
+            )
+        )
+
+    # =========================================================
+    # GENERATE
+    # =========================================================
+
+    def generate_wrap(self):
+
+        if self.viewport.mesh is None:
+
+            self.statusBar().showMessage(
+                "Load a model first."
+            )
+
+            return
+
+        try:
+
+            #
+            # ------------------------------------------------
+            # NPTH
+            # ------------------------------------------------
+            #
+
+            holes = (
+                self._transformed_drills()
+            )
+
+            #
+            # ------------------------------------------------
+            # TOP / BOTTOM PROJECTION + PCB DETECTION
+            # ------------------------------------------------
+            #
+
+            self.statusBar().showMessage(
+                "Projecting model and detecting rigid PCB..."
+            )
+
+            raw = generate_heightmap(
+                mesh=self.viewport.mesh,
+
+                resolution=(
+                    self.resolution_spin.value()
+                ),
+            )
+
+            #
+            # ------------------------------------------------
+            # COMPONENT CLOTH
+            # ------------------------------------------------
+            #
+
+            self.statusBar().showMessage(
+                (
+                    f"PCB detected: "
+                    f"{raw.pcb_thickness:.3f} mm — "
+                    f"building component envelope..."
+                )
+            )
+
+            envelope = build_envelope(
+                heightmap=raw,
+
+                smoothing_mm=(
+                    self.smoothing_spin.value()
+                ),
+
+                clearance_mm=(
+                    self.clearance_spin.value()
+                ),
+
+                bridge_mm=(
+                    self.bridge_spin.value()
+                ),
+
+                slope_degrees=(
+                    self.slope_spin.value()
+                ),
+
+                holes=holes,
+
+                hole_keepout_mm=(
+                    self.hole_keepout_spin.value()
+                ),
+            )
+
+            #
+            # ------------------------------------------------
+            # FINAL SOLID
+            # ------------------------------------------------
+            #
+
+            self.statusBar().showMessage(
+                (
+                    f"Building rigid PCB + cloth "
+                    f"with {len(holes)} NPTH holes..."
+                )
+            )
+
+            mesh = envelope_to_mesh(
+                envelope,
+                surface_tolerance=(
+                    self.surface_tolerance_spin.value()
+                ),
+                max_span_cells=128,
+            )
+
+            self.generated_mesh = mesh
+
+            self.viewport.show_generated_mesh(
+                mesh
+            )
+
+            self.export_button.setEnabled(
+                True
+            )
+
+            self.show_wrap_button.setEnabled(
+                True
+            )
+
+            self.statusBar().showMessage(
+                (
+                    f"Wrap generated | "
+                    f"PCB {raw.pcb_thickness:.3f} mm | "
+                    f"{len(holes)} NPTH | "
+                    f"{len(mesh.vertices):,} vertices | "
+                    f"{len(mesh.faces):,} triangles"
+                )
+            )
+
+        except Exception as exc:
+
+            self.statusBar().showMessage(
+                f"Generation error: {exc}"
+            )
+
+            raise
+
+    # =========================================================
+    # DISPLAY / EXPORT
+    # =========================================================
+
+    def show_original(self):
+
+        self.viewport.show_original_mesh()
+
+    def show_wrap(self):
+
+        if self.generated_mesh is not None:
+
+            self.viewport.show_generated_mesh(
+                self.generated_mesh
+            )
+
+    def export_generated(self):
+
+        if self.generated_mesh is None:
+            return
+
+        path, selected = (
+            QFileDialog.getSaveFileName(
+                self,
+                "Export ShrinkWrap",
+                "shrinkwrap.stl",
+                (
+                    "STL (*.stl);;"
+                    "OBJ (*.obj);;"
+                    "PLY (*.ply);;"
+                    "GLB (*.glb)"
+                ),
+            )
+        )
+
+        if not path:
+            return
+
+        if not Path(
+            path
+        ).suffix:
+
+            if "OBJ" in selected:
+                path += ".obj"
+
+            elif "PLY" in selected:
+                path += ".ply"
+
+            elif "GLB" in selected:
+                path += ".glb"
+
+            else:
+                path += ".stl"
+
+        export_mesh(
+            self.generated_mesh,
+            path,
+        )
+
+        self.statusBar().showMessage(
+            f"Exported: {path}"
+        )
+
+    # =========================================================
+    # STYLE
+    # =========================================================
+
+    def _apply_style(
+        self,
+        widget,
+    ):
+
+        #
+        # Sidebar style.
+        #
+        widget.setStyleSheet(
+            """
+            #sidebar {
+                background: #111214;
+                color: #f5f5f7;
+                border: none;
+            }
+
+            QLabel {
+                color: #f5f5f7;
+                background: transparent;
+                font-size: 13px;
+            }
+
+            QLabel#title {
+                color: #ffffff;
+                font-size: 22px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }
+
+            QLabel#subtitle {
+                color: #8e8e93;
+                font-size: 12px;
+                margin-bottom: 8px;
+            }
+
+            QGroupBox {
+                color: #f5f5f7;
+
+                background: #1c1c1e;
+
+                border: 1px solid #2c2c2e;
+                border-radius: 12px;
+
+                margin-top: 14px;
+                padding:
+                    14px
+                    12px
+                    12px
+                    12px;
+
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+
+                left: 12px;
+
+                padding:
+                    0px
+                    6px;
+
+                color: #98989d;
+
+                background: #111214;
+
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            QLineEdit,
+            QDoubleSpinBox {
+                min-height: 28px;
+
+                color: #f5f5f7;
+                background: #2c2c2e;
+
+                border: 1px solid #3a3a3c;
+                border-radius: 7px;
+
+                padding:
+                    2px
+                    8px;
+
+                selection-background-color: #0a84ff;
+            }
+
+            QDoubleSpinBox:hover {
+                border-color: #545458;
+            }
+
+            QDoubleSpinBox:focus {
+                border-color: #0a84ff;
+            }
+
+            QDoubleSpinBox::up-button,
+            QDoubleSpinBox::down-button {
+                width: 16px;
+                border: none;
+                background: transparent;
+            }
+
+            QCheckBox {
+                color: #e5e5ea;
+                spacing: 8px;
+                font-size: 12px;
+            }
+
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+
+                border-radius: 4px;
+                border: 1px solid #48484a;
+
+                background: #2c2c2e;
+            }
+
+            QCheckBox::indicator:hover {
+                border-color: #636366;
+            }
+
+            QCheckBox::indicator:checked {
+                background: #0a84ff;
+                border-color: #0a84ff;
+            }
+
+            QPushButton {
+                min-height: 30px;
+
+                color: #f5f5f7;
+                background: #2c2c2e;
+
+                border: 1px solid #3a3a3c;
+                border-radius: 8px;
+
+                padding:
+                    2px
+                    12px;
+
+                font-size: 12px;
+                font-weight: 500;
+            }
+
+            QPushButton:hover {
+                background: #363638;
+                border-color: #4a4a4d;
+            }
+
+            QPushButton:pressed {
+                background: #252527;
+            }
+
+            QPushButton:disabled {
+                color: #636366;
+                background: #1c1c1e;
+                border-color: #2c2c2e;
+            }
+
+            QPushButton#primaryButton {
+                color: white;
+                background: #0a84ff;
+                border-color: #0a84ff;
+                font-weight: 600;
+            }
+
+            QPushButton#primaryButton:hover {
+                background: #2793ff;
+            }
+            """
+        )
+
+        #
+        # Window chrome style mora da bude na celom prozoru,
+        # ne samo sidebar-u.
+        #
+        self.setStyleSheet(
+            self.styleSheet()
+            +
+            """
+            QMainWindow,
+            QWidget#windowRoot {
+                background: #111214;
+            }
+
+            QStatusBar {
+                color: #8e8e93;
+                background: #111214;
+
+                border-top: 1px solid #252527;
+
+                font-size: 11px;
+            }
+            """
+        )
+
+
