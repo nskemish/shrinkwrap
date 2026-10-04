@@ -7,7 +7,6 @@ pybind11_add_module(
     components/rasterizer/rasterizer.cpp
     components/relief/relief.cpp
     components/regularizer/regularizer.cpp
-    components/mesher/mesher.cpp
     components/adaptive_mesher/adaptive_mesher.cpp
     components/qem_simplifier/qem_simplifier.cpp
 )
@@ -19,7 +18,6 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/components/rasterizer
     ${CMAKE_CURRENT_SOURCE_DIR}/components/relief
     ${CMAKE_CURRENT_SOURCE_DIR}/components/regularizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/components/mesher
     ${CMAKE_CURRENT_SOURCE_DIR}/components/adaptive_mesher
     ${CMAKE_CURRENT_SOURCE_DIR}/components/qem_simplifier
 )

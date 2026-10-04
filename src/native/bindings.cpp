@@ -1,7 +1,6 @@
 #include "rasterizer.hpp"
 #include "relief.hpp"
 #include "regularizer.hpp"
-#include "mesher.hpp"
 #include "adaptive_mesher.hpp"
 #include "qem_simplifier.hpp"
 
@@ -224,114 +223,6 @@ void propagate_relief_binding(
     );
 }
 
-
-
-py::tuple envelope_to_mesh_binding(
-    py::array_t<
-        float,
-        py::array::c_style
-    > top,
-
-    py::array_t<
-        float,
-        py::array::c_style
-    > bottom,
-
-    py::array_t<
-        float,
-        py::array::c_style
-    > phi,
-
-    const double min_x,
-    const double min_y,
-    const double resolution
-) {
-    if (
-        top.ndim() != 2 ||
-        bottom.ndim() != 2 ||
-        phi.ndim() != 2
-    ) {
-        throw std::invalid_argument(
-            "top, bottom and phi must be 2D."
-        );
-    }
-
-    if (
-        top.shape(0) != bottom.shape(0) ||
-        top.shape(1) != bottom.shape(1) ||
-        top.shape(0) != phi.shape(0) ||
-        top.shape(1) != phi.shape(1)
-    ) {
-        throw std::invalid_argument(
-            "top, bottom and phi shapes must match."
-        );
-    }
-
-    const auto height =
-        static_cast<std::size_t>(
-            top.shape(0)
-        );
-
-    const auto width =
-        static_cast<std::size_t>(
-            top.shape(1)
-        );
-
-    shrinkwrap::MeshResult result;
-
-    {
-        py::gil_scoped_release release;
-
-        result =
-            shrinkwrap::envelope_to_mesh(
-                top.data(),
-                bottom.data(),
-                phi.data(),
-
-                width,
-                height,
-
-                min_x,
-                min_y,
-                resolution
-            );
-    }
-
-    const std::size_t vertex_count =
-        result.vertices.size() / 3;
-
-    const std::size_t face_count =
-        result.faces.size() / 3;
-
-    py::array_t<float> vertices({
-        static_cast<py::ssize_t>(vertex_count),
-        static_cast<py::ssize_t>(3)
-    });
-
-    py::array_t<std::int64_t> faces({
-        static_cast<py::ssize_t>(face_count),
-        static_cast<py::ssize_t>(3)
-    });
-
-    std::copy(
-        result.vertices.begin(),
-        result.vertices.end(),
-        vertices.mutable_data()
-    );
-
-    std::copy(
-        result.faces.begin(),
-        result.faces.end(),
-        faces.mutable_data()
-    );
-
-    return py::make_tuple(
-        vertices,
-        faces,
-        result.active_cells,
-        result.boundary_cells
-    );
-}
 
 
 
@@ -688,22 +579,7 @@ relief is modified in-place.
     );
 
 
-    module.def(
-        "envelope_to_mesh",
-        &envelope_to_mesh_binding,
-
-        py::arg("top"),
-        py::arg("bottom"),
-        py::arg("phi"),
-        py::arg("min_x"),
-        py::arg("min_y"),
-        py::arg("resolution"),
-
-        "Generate envelope mesh using native C++ mesher."
-    );
-
-
-    module.def(
+        module.def(
         "adaptive_envelope_to_mesh",
         &adaptive_envelope_to_mesh_binding,
 
