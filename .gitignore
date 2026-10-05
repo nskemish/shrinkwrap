@@ -148,3 +148,9 @@ outputs/
 
 Thumbs.db
 Desktop.ini
+
+_native*.so
+_native*.dylib
+shrinkwrap_dump*.txt
+shrinkwrap_cpp_dump*.txt
+icon.iconset/

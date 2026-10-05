@@ -369,6 +369,179 @@ def build_envelope(
 # ============================================================
 
 
+
+def _mask_boundary(
+    mask: np.ndarray,
+) -> np.ndarray:
+    """
+    Return the inner one-pixel boundary of a boolean mask.
+
+    Pixels belong to the boundary when they are inside the PCB
+    footprint but touch the exterior.
+    """
+
+    mask = np.asarray(
+        mask,
+        dtype=np.bool_,
+    )
+
+    if mask.ndim != 2:
+        raise ValueError(
+            "mask must be a 2D array."
+        )
+
+    if not np.any(mask):
+        return np.zeros_like(
+            mask,
+            dtype=np.bool_,
+        )
+
+    eroded = ndimage.binary_erosion(
+        mask,
+        structure=np.ones(
+            (3, 3),
+            dtype=np.bool_,
+        ),
+        border_value=0,
+    )
+
+    return np.logical_and(
+        mask,
+        ~eroded,
+    )
+
+
+def _make_hole_keepout_weight(
+    heightmap: HeightMap,
+    holes: list[DrillHole],
+    keepout_mm: float,
+    feather_mm: float,
+) -> np.ndarray:
+    """
+    Build a cloth weight map around NPTH holes.
+
+    0.0 -> rigid PCB / no cloth
+    1.0 -> full cloth
+
+    The zero-weight region extends to:
+
+        hole_radius + keepout_mm
+
+    followed by a smooth transition over feather_mm.
+    """
+
+    shape = heightmap.pcb_mask.shape
+
+    height, width = shape
+
+    xs = (
+        float(heightmap.min_x)
+        +
+        np.arange(
+            width,
+            dtype=np.float32,
+        )
+        *
+        float(heightmap.resolution)
+    )
+
+    ys = (
+        float(heightmap.min_y)
+        +
+        np.arange(
+            height,
+            dtype=np.float32,
+        )
+        *
+        float(heightmap.resolution)
+    )
+
+    xx, yy = np.meshgrid(
+        xs,
+        ys,
+    )
+
+    weight = np.ones(
+        shape,
+        dtype=np.float32,
+    )
+
+    keepout_mm = max(
+        0.0,
+        float(keepout_mm),
+    )
+
+    feather_mm = max(
+        0.0,
+        float(feather_mm),
+    )
+
+    for hole in holes:
+
+        radius = max(
+            0.0,
+            float(hole.diameter) * 0.5,
+        )
+
+        zero_radius = (
+            radius
+            +
+            keepout_mm
+        )
+
+        distance = np.sqrt(
+            (xx - float(hole.x)) ** 2
+            +
+            (yy - float(hole.y)) ** 2
+        )
+
+        if feather_mm <= 1e-9:
+
+            hole_weight = (
+                distance
+                >
+                zero_radius
+            ).astype(
+                np.float32
+            )
+
+        else:
+
+            t = np.clip(
+                (
+                    distance
+                    -
+                    zero_radius
+                )
+                /
+                feather_mm,
+                0.0,
+                1.0,
+            ).astype(
+                np.float32
+            )
+
+            hole_weight = (
+                t
+                *
+                t
+                *
+                (
+                    3.0
+                    -
+                    2.0 * t
+                )
+            )
+
+        np.minimum(
+            weight,
+            hole_weight,
+            out=weight,
+        )
+
+    return weight
+
+
 def _build_relief_cloth(
     relief: np.ndarray,
     pcb_mask: np.ndarray,
@@ -648,18 +821,158 @@ def _build_relief_cloth(
 
     return result
 
-
 def _propagate_relief(
     relief: np.ndarray,
     pcb_mask: np.ndarray,
     drop_per_pixel: float,
 ) -> np.ndarray:
-    """Native C++ relief propagation with Python fallback."""
+    """Propagate component relief inside the PCB footprint."""
 
+    result = np.ascontiguousarray(
+        relief,
+        dtype=np.float32,
+    ).copy()
 
-    return envelope_to_mesh_adaptive(
-        envelope=envelope,
-        surface_tolerance=surface_tolerance,
-        max_span_cells=max_span_cells,
+    mask = np.ascontiguousarray(
+        pcb_mask,
+        dtype=np.bool_,
     )
+
+    if (
+        _native is not None
+        and hasattr(_native, "propagate_relief")
+    ):
+        _native.propagate_relief(
+            result,
+            mask,
+            float(drop_per_pixel),
+        )
+
+        result[~mask] = 0.0
+        return result
+
+    height, width = result.shape
+
+    for y in range(height):
+        for x in range(1, width):
+            if mask[y, x] and mask[y, x - 1]:
+                result[y, x] = max(
+                    result[y, x],
+                    result[y, x - 1] - drop_per_pixel,
+                    0.0,
+                )
+
+        for x in range(width - 2, -1, -1):
+            if mask[y, x] and mask[y, x + 1]:
+                result[y, x] = max(
+                    result[y, x],
+                    result[y, x + 1] - drop_per_pixel,
+                    0.0,
+                )
+
+    for x in range(width):
+        for y in range(1, height):
+            if mask[y, x] and mask[y - 1, x]:
+                result[y, x] = max(
+                    result[y, x],
+                    result[y - 1, x] - drop_per_pixel,
+                    0.0,
+                )
+
+        for y in range(height - 2, -1, -1):
+            if mask[y, x] and mask[y + 1, x]:
+                result[y, x] = max(
+                    result[y, x],
+                    result[y + 1, x] - drop_per_pixel,
+                    0.0,
+                )
+
+    result[~mask] = 0.0
+
+    return result
+
+
+def envelope_to_mesh(
+    envelope: Envelope,
+    surface_tolerance: float = 0.01,
+    max_span_cells: int = 128,
+) -> trimesh.Trimesh:
+    """Convert an Envelope to a watertight adaptive triangle mesh."""
+
+    if _native is None:
+        raise RuntimeError(
+            "ShrinkWrap native extension is not available."
+        )
+
+    if not hasattr(_native, "adaptive_envelope_to_mesh"):
+        raise RuntimeError(
+            "Native adaptive mesher is not available."
+        )
+
+    top = np.ascontiguousarray(
+        envelope.top,
+        dtype=np.float32,
+    )
+
+    bottom = np.ascontiguousarray(
+        envelope.bottom,
+        dtype=np.float32,
+    )
+
+    mask = np.asarray(
+        envelope.pcb_mask,
+        dtype=np.bool_,
+    )
+
+    phi = np.where(
+        mask,
+        1.0,
+        -1.0,
+    ).astype(np.float32)
+
+    phi = np.ascontiguousarray(phi)
+
+    (
+        vertices,
+        faces,
+        adaptive_patches,
+        boundary_cells,
+        base_cells_saved,
+    ) = _native.adaptive_envelope_to_mesh(
+        top,
+        bottom,
+        phi,
+        float(envelope.min_x),
+        float(envelope.min_y),
+        float(envelope.resolution),
+        float(surface_tolerance),
+        int(max_span_cells),
+    )
+
+    vertices = np.asarray(
+        vertices,
+        dtype=np.float64,
+    )
+
+    faces = np.asarray(
+        faces,
+        dtype=np.int64,
+    )
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=faces,
+        process=False,
+    )
+
+    print(
+        "[mesher] "
+        f"vertices={len(vertices)} | "
+        f"faces={len(faces)} | "
+        f"adaptive patches={adaptive_patches} | "
+        f"boundary cells={boundary_cells} | "
+        f"base cells saved={base_cells_saved}"
+    )
+
+    return mesh
 

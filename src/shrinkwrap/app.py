@@ -1,9 +1,10 @@
 import sys
 
-from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtGui import QSurfaceFormat, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from shrinkwrap.ui.window import MainWindow
+from shrinkwrap.resources import resources_rc
 
 
 def main():
@@ -23,6 +24,35 @@ def main():
 
     app.setApplicationName("ShrinkWrap")
     app.setOrganizationName("ShrinkWrap")
+
+    font_id = QFontDatabase.addApplicationFont(
+        ":/branding/font.ttf"
+    )
+
+    if font_id < 0:
+        print(
+            "[font] Failed to load embedded font"
+        )
+    else:
+        families = (
+            QFontDatabase.applicationFontFamilies(
+                font_id
+            )
+        )
+
+        if families:
+            font = app.font()
+            font.setFamily(
+                families[0]
+            )
+            app.setFont(
+                font
+            )
+
+            print(
+                "[font] Using:",
+                families[0],
+            )
 
     window = MainWindow()
     window.show()

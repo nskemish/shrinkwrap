@@ -3,7 +3,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 
 from PySide6.QtGui import (
-    QPixmap,
     QColor,
     QLinearGradient,
     QPainter,
@@ -25,8 +24,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-from shrinkwrap.resources import resources_rc
 
 from shrinkwrap.io.mesh_loader import (
     MeshLoadError,
@@ -325,7 +322,7 @@ class MainWindow(QMainWindow):
         #
         layout.setContentsMargins(
             18,
-            30,
+            58,
             18,
             18,
         )
@@ -338,35 +335,28 @@ class MainWindow(QMainWindow):
         # HEADER
         # =====================================================
 
-        title = QLabel()
-
-        title.setAlignment(
-            Qt.AlignHCenter
-        )
-
-        title.setContentsMargins(
-            0,
-            0,
-            0,
-            0,
-        )
-
-        title.setPixmap(
-            QPixmap(
-                ":/branding/logo.svg"
-            ).scaledToWidth(
-                220,
-                Qt.SmoothTransformation,
-            )
+        title = QLabel(
+            "SHRINKWRAP"
         )
 
         title.setObjectName(
             "title"
         )
 
+        subtitle = QLabel(
+            "PCB envelope + Excellon drilling"
+        )
+
+        subtitle.setObjectName(
+            "subtitle"
+        )
 
         layout.addWidget(
             title
+        )
+
+        layout.addWidget(
+            subtitle
         )
 
         # =====================================================
@@ -374,7 +364,7 @@ class MainWindow(QMainWindow):
         # =====================================================
 
         model_group = QGroupBox(
-            "Model"
+            "3D Model"
         )
 
         model_layout = QVBoxLayout(
@@ -417,6 +407,22 @@ class MainWindow(QMainWindow):
             focus_button
         )
 
+        layout.addWidget(
+            model_group
+        )
+
+        # =====================================================
+        # DRILL FILES
+        # =====================================================
+
+        drill_group = QGroupBox(
+            "Drill Data"
+        )
+
+        drill_layout = QVBoxLayout(
+            drill_group
+        )
+
         self.npth_label = QLabel(
             "NPTH: not loaded"
         )
@@ -433,16 +439,16 @@ class MainWindow(QMainWindow):
             self.open_npth
         )
 
-        model_layout.addWidget(
+        drill_layout.addWidget(
             self.npth_label
         )
 
-        model_layout.addWidget(
+        drill_layout.addWidget(
             npth_button
         )
 
         layout.addWidget(
-            model_group
+            drill_group
         )
 
         # =====================================================
@@ -1311,7 +1317,7 @@ class MainWindow(QMainWindow):
             QLabel {
                 color: #f5f5f7;
                 background: transparent;
-                font-size: 10px;
+                font-size: 13px;
             }
 
             QLabel#title {
@@ -1323,7 +1329,7 @@ class MainWindow(QMainWindow):
 
             QLabel#subtitle {
                 color: #8e8e93;
-                font-size: 10px;
+                font-size: 12px;
                 margin-bottom: 8px;
             }
 
@@ -1342,7 +1348,7 @@ class MainWindow(QMainWindow):
                     12px
                     12px;
 
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 600;
             }
 
@@ -1360,7 +1366,7 @@ class MainWindow(QMainWindow):
 
                 background: #111214;
 
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 600;
             }
 
@@ -1399,7 +1405,7 @@ class MainWindow(QMainWindow):
             QCheckBox {
                 color: #e5e5ea;
                 spacing: 8px;
-                font-size: 10px;
+                font-size: 12px;
             }
 
             QCheckBox::indicator {
@@ -1434,7 +1440,7 @@ class MainWindow(QMainWindow):
                     2px
                     12px;
 
-                font-size: 10px;
+                font-size: 12px;
                 font-weight: 500;
             }
 
@@ -1485,7 +1491,7 @@ class MainWindow(QMainWindow):
 
                 border-top: 1px solid #252527;
 
-                font-size: 10px;
+                font-size: 11px;
             }
             """
         )

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 echo
 echo "============================================================"
@@ -38,7 +38,7 @@ echo "============================================================"
 echo
 
 uv run python - <<'PY'
-from core import _native
+from shrinkwrap import _native
 
 print("Native module:", _native)
 print("project_mesh:", _native.project_mesh)
@@ -55,7 +55,7 @@ echo " ShrinkWrap — macOS icon"
 echo "============================================================"
 echo
 
-if [[ -f "icon.png" ]]; then
+if [[ -f "assets/icon.png" ]]; then
     echo "Generating icon.icns from icon.png..."
 
     rm -rf icon.iconset
@@ -120,14 +120,14 @@ if [[ -f "icon.png" ]]; then
 
     echo "Created: icon.icns"
 
-elif [[ -f "icon.icns" ]]; then
-    echo "icon.png not found."
+elif [[ -f "assets/icon.icns" ]]; then
+    echo "assets/icon.png not found."
     echo "Using existing icon.icns."
 
 else
     echo "ERROR: icon.png or icon.icns not found."
     echo
-    echo "Place icon.png in the project root."
+    echo "Place icon.png in assets/."
     exit 1
 fi
 
@@ -146,7 +146,7 @@ rm -rf \
 uv run pyinstaller \
     --clean \
     --noconfirm \
-    ShrinkWrap.spec
+    packaging/ShrinkWrap.spec
 
 
 echo

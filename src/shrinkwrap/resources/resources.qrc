@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/branding">
+        <file alias="logo.svg">../../../assets/logo-light.svg</file>
+            <file alias="font.ttf">font.ttf</file>
+    </qresource>
+</RCC>
