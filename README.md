@@ -16,28 +16,22 @@
 
 ## About
 
-Shrinkwrap is a tool for converting PCB designs into simplified, 3D-printable physical models.
+Shrinkwrap converts PCB designs into simplified, dimensionally accurate 3D models optimized for 3D printing.
 
-It is built around a straightforward idea: a PCB should be mechanically testable before it is manufactured. Shrinkwrap creates a printable representation of the board that can be used during enclosure design, assembly planning, and mechanical validation.
+It provides a way to produce a physical representation of a PCB before fabrication, allowing mechanical aspects of the design to be evaluated without waiting for manufactured boards.
 
-Rather than reproducing the complete PCB model, Shrinkwrap extracts and preserves the geometry that matters physically — board shape, mounting features, component placement, connector positions, and component height.
+The generated geometry preserves the physical features relevant to mechanical validation, including board dimensions, mounting holes, component placement, component height, and connector positions.
 
-The resulting model is intentionally simplified for practical 3D printing, making it possible to produce a physical representation of a board early in the design process.
+By reducing unnecessary geometric detail while retaining the mechanical envelope of the PCB, Shrinkwrap produces models suitable for direct 3D printing and physical fit verification.
 
-## Geometry
+## Purpose
 
-Shrinkwrap focuses on the mechanical envelope of the PCB.
+PCB design and mechanical design are often validated separately, with physical fit issues becoming apparent only after a board has been manufactured.
 
-The generated model preserves:
+Shrinkwrap moves this validation earlier in the development process by providing a printable representation of the PCB directly from the design.
 
-- board outline and dimensions
-- cutouts and mounting holes
-- component position and height
-- connector geometry and placement
-- overall PCB mechanical envelope
-
-Complex component geometry is reduced where possible, keeping the model lightweight and suitable for physical prototyping without unnecessary detail.
+The resulting model can be used during enclosure development, assembly planning, and mechanical integration, allowing dimensional and fitment issues to be identified before committing to PCB fabrication.
 
 ## Project Status
 
-Shrinkwrap is under active development. The current focus is PCB geometry processing, reliable model generation, and producing clean geometry suitable for 3D printing.
+Shrinkwrap is currently under active development.
