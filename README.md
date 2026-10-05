@@ -8,7 +8,7 @@
 
 <br>
 
-**PCB-to-3D workflow for rapid physical prototyping and mechanical verification.**
+**Physical prototyping for PCB designs.**
 
 </div>
 
@@ -16,42 +16,40 @@
 
 ## About
 
-Shrinkwrap converts PCB designs into simplified, dimensionally representative 3D models optimized for rapid 3D printing.
+Shrinkwrap converts PCB designs into simplified, 3D-printable models for mechanical verification before fabrication.
 
-It provides a fast way to produce a physical representation of a PCB before fabrication, allowing mechanical aspects of a design to be evaluated without waiting for manufactured boards.
+It preserves the physical geometry relevant to prototyping — board outline, mounting holes, component placement, height, and connector positions — while simplifying the model for 3D printing.
 
-> [!NOTE]
-> **Shrinkwrap is designed to make PCB designs physically testable as early as possible.**
-> Generate the model, print it, and verify the mechanical design before committing to PCB fabrication.
+This allows a PCB design to be physically tested against enclosures and other mechanical parts without waiting for the actual board to be manufactured.
 
-The generated geometry preserves the physical features relevant to mechanical validation, including board dimensions, mounting holes, component placement, component height, and connector positions.
+## Workflow
 
-## Features
+**1. Import the PCB**
 
-- **PCB-to-3D conversion** — Generate printable geometry directly from PCB design data.
-- **Print-optimized geometry** — Simplified models designed for fast and reliable 3D printing.
-- **Board geometry** — Preserve board outlines, dimensions, cutouts, and mounting holes.
-- **Component representation** — Reproduce component position and physical height.
-- **Interactive preview** — Inspect the generated model before export.
-- **3D model export** — Export geometry ready for slicing and physical prototyping.
-- **Mechanical verification** — Validate fit, alignment, clearances, and mechanical constraints.
+Load the PCB design into Shrinkwrap.
 
-## Use Cases
+**2. Generate the model**
 
-Shrinkwrap is primarily intended for **rapid physical PCB prototyping before fabrication**.
+Shrinkwrap processes the board and component geometry into a simplified model suitable for 3D printing.
 
-A generated model can be sent directly to a 3D printer and used as a physical stand-in for the final PCB during mechanical development.
+**3. Inspect and export**
 
-This allows early verification of:
+Preview the generated geometry and export the model for slicing.
 
-- enclosure fit and internal clearances
-- PCB dimensions and board outline
-- mounting-hole position and alignment
-- connector position and accessibility
-- component placement and height
-- interaction with brackets, panels, and other mechanical parts
+**4. Print and verify**
 
-> [!IMPORTANT]
-> Shrinkwrap models represent the **physical geometry** of a PCB. They are intended for mechanical prototyping and verification, not electrical simulation or functional PCB replacement.
+Print the model and use it as a physical reference to verify the mechanical design before ordering the PCB.
 
-By moving mechanical validation ahead of fabrication, design errors can be identified before committing to a manufactured board.
+## What can be verified?
+
+- Board dimensions and outline
+- Mounting-hole alignment
+- Enclosure fit
+- Connector position and accessibility
+- Component placement and height
+- Internal clearances
+- Alignment with panels, brackets, and other mechanical parts
+
+---
+
+Shrinkwrap brings physical mechanical validation into the PCB design process, allowing fitment issues to be identified before fabrication.
